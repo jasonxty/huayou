@@ -1,0 +1,8 @@
+.env
+.venv/
+huayou.db
+huayou.db-shm
+huayou.db-wal
+__pycache__/
+*.pyc
+.pytest_cache/
