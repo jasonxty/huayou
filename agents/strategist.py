@@ -140,6 +140,14 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
         allowed_numbers.add(round(regime_match.get("avg_return", 0) * 100, 1))
         allowed_numbers.add(round(regime_match.get("win_rate", 0) * 100, 0))
 
+    for ar in agent_results:
+        for v in ar.signals:
+            for n in re.findall(r"[\d]+\.?\d*", v):
+                try:
+                    allowed_numbers.add(float(n))
+                except ValueError:
+                    pass
+
     date_stripped = re.sub(r"\d{4}-\d{2}-\d{2}", "", brief_text)
     found_numbers = re.findall(r"[\d]+\.?\d*", date_stripped)
     violations = []
@@ -224,7 +232,9 @@ def synthesize(
     confidence = max(lo, min(hi, raw_conf))
 
     tech_result = next((a for a in agent_results if a.agent_name == "technical"), None)
+    fund_result = next((a for a in agent_results if a.agent_name == "fundamental"), None)
     tech_score = tech_result.score if tech_result else 0
+    fund_score = fund_result.score if fund_result else 0
     support = tech_result.details.get("support", "N/A") if tech_result else "N/A"
     resistance = tech_result.details.get("resistance", "N/A") if tech_result else "N/A"
     atr = tech_result.details.get("atr14", "N/A") if tech_result else "N/A"
@@ -262,6 +272,23 @@ def synthesize(
     if tech_result:
         for sig in tech_result.signals:
             brief_text += f"    • {sig}\n"
+
+    if fund_result:
+        fd = fund_result.details
+        brief_text += f"""
+  ── FUNDAMENTAL (score: {fund_score:+.0f}/100) ──
+  {fd.get('report_period', '')}  市值{fd.get('market_cap', 0):.0f}亿  PE(TTM){fd.get('pe_ttm', 0):.1f}x  PB{fd.get('pb', 0):.1f}x
+  毛利率{fd.get('gross_margin', 0):.1f}%  净利率{fd.get('net_margin', 0):.1f}%  ROE{fd.get('roe', 0):.1f}%  负债率{fd.get('debt_ratio', 0):.1f}%
+  营收YoY{fd.get('revenue_yoy', 0):+.0f}%  归母净利YoY{fd.get('profit_yoy', 0):+.0f}%
+"""
+        for sig in fund_result.signals:
+            brief_text += f"    • {sig}\n"
+
+        commodities = fd.get("commodities_to_track", [])
+        if commodities:
+            brief_text += "\n  应追踪商品:\n"
+            for c in commodities:
+                brief_text += f"    → {c}\n"
 
     brief_text += f"""
   ── REGIME ({current_regime['trend']} / {current_regime['rsi']}) ──

@@ -18,7 +18,9 @@ from data.store import (
 from data.fetcher import fetch_incremental
 from data.indicators import compute_all
 from agents.technical import analyze as analyze_technical
+from agents.fundamental import analyze as analyze_fundamental
 from agents.strategist import synthesize, classify_regime, match_historical_regime
+from data.fundamental import fetch_fundamentals
 from backtest.engine import run_all_strategies
 
 logging.basicConfig(
@@ -87,13 +89,30 @@ def step_analyze(conn, backtest_results: list) -> None:
         logger.error("No data available for analysis.")
         return
 
+    latest_price = float(ohlcv.iloc[-1]["close"])
+    agent_results = []
+
     logger.info("Running Technical Analyst...")
     tech_result = analyze_technical(ohlcv, indicators)
     save_agent_run(
         conn, str(ohlcv.iloc[-1]["date"]),
         tech_result.agent_name, tech_result.score, tech_result.to_dict(),
     )
+    agent_results.append(tech_result)
     logger.info("Technical score: %+.0f", tech_result.score)
+
+    logger.info("Running Fundamental Analyst...")
+    try:
+        snap = fetch_fundamentals(current_price=latest_price)
+        fund_result = analyze_fundamental(snap)
+        save_agent_run(
+            conn, str(ohlcv.iloc[-1]["date"]),
+            fund_result.agent_name, fund_result.score, fund_result.to_dict(),
+        )
+        agent_results.append(fund_result)
+        logger.info("Fundamental score: %+.0f", fund_result.score)
+    except Exception as e:
+        logger.warning("Fundamental analysis failed (non-fatal): %s", e)
 
     logger.info("Classifying market regime...")
     regime = classify_regime(indicators)
@@ -101,9 +120,8 @@ def step_analyze(conn, backtest_results: list) -> None:
     logger.info("Regime: %s, matches: %d", regime, regime_match["count"])
 
     logger.info("Synthesizing morning brief...")
-    latest_price = float(ohlcv.iloc[-1]["close"])
     brief = synthesize(
-        agent_results=[tech_result],
+        agent_results=agent_results,
         backtest_results=backtest_results,
         regime_match=regime_match,
         current_regime=regime,
