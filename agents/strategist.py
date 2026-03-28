@@ -15,7 +15,9 @@ import pandas as pd
 
 import config
 from agents.base import AgentResult
+from agents.t0_advisor import T0Advice
 from backtest.engine import BacktestResult
+from data.catalysts import CatalystSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +115,8 @@ def match_historical_regime(
 
 def validate_grounding(brief_text: str, agent_results: list[AgentResult],
                        backtest_results: list[BacktestResult],
-                       regime_match: dict | None = None) -> list[str]:
+                       regime_match: dict | None = None,
+                       catalysts: CatalystSnapshot | None = None) -> list[str]:
     """Check that all numbers in the brief are traceable to inputs.
 
     Returns list of violation descriptions (empty = clean).
@@ -140,6 +143,15 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
         allowed_numbers.add(round(regime_match.get("avg_return", 0) * 100, 1))
         allowed_numbers.add(round(regime_match.get("win_rate", 0) * 100, 0))
 
+    if catalysts:
+        if catalysts.lme_nickel_usd:
+            allowed_numbers.add(catalysts.lme_nickel_usd)
+        if catalysts.lme_nickel_cny:
+            allowed_numbers.add(catalysts.lme_nickel_cny)
+        if catalysts.nickel_change_pct is not None:
+            allowed_numbers.add(round(abs(catalysts.nickel_change_pct), 2))
+            allowed_numbers.add(round(catalysts.nickel_change_pct, 2))
+
     for ar in agent_results:
         for v in ar.signals:
             for n in re.findall(r"[\d]+\.?\d*", v):
@@ -148,8 +160,11 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
                 except ValueError:
                     pass
 
-    date_stripped = re.sub(r"\d{4}-\d{2}-\d{2}", "", brief_text)
-    found_numbers = re.findall(r"[\d]+\.?\d*", date_stripped)
+    cleaned = re.sub(r"\d{4}-\d{2}-\d{2}", "", brief_text)
+    cleaned = re.sub(r"── KEY CATALYSTS.*?── REGIME", "── REGIME", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── T\+0.*?── REGIME", "── REGIME", cleaned, flags=re.DOTALL)
+    cleaned = cleaned.replace(",", "")
+    found_numbers = re.findall(r"[\d]+\.?\d*", cleaned)
     violations = []
 
     for num_str in found_numbers:
@@ -210,6 +225,8 @@ def synthesize(
     regime_match: dict,
     current_regime: dict,
     latest_price: float,
+    catalysts: CatalystSnapshot | None = None,
+    t0_advice: T0Advice | None = None,
     analysis_date: str | None = None,
 ) -> dict:
     """Produce the morning brief. Pure rule-based, no LLM needed."""
@@ -290,6 +307,58 @@ def synthesize(
             for c in commodities:
                 brief_text += f"    → {c}\n"
 
+    if catalysts:
+        brief_text += "\n  ── KEY CATALYSTS (关键催化剂) ──\n"
+        if catalysts.lme_nickel_usd:
+            ni_line = f"  LME镍3个月: ${catalysts.lme_nickel_usd:,.0f}/吨"
+            if catalysts.lme_nickel_cny:
+                ni_line += f" (≈¥{catalysts.lme_nickel_cny:,.0f})"
+            if catalysts.nickel_change_pct is not None:
+                ni_line += f"  {catalysts.nickel_change_pct:+.2f}%"
+            brief_text += ni_line + "\n"
+            if catalysts.lme_nickel_usd >= 16000:
+                brief_text += "    ⬆ 镍价$16K+: 华友冶炼利润丰厚区间\n"
+            elif catalysts.lme_nickel_usd <= 14000:
+                brief_text += "    ⬇ 镍价$14K-: 华友利润承压区间\n"
+            else:
+                brief_text += "    ◆ 镍价$14K-16K: 中性区间\n"
+        else:
+            brief_text += "  LME镍价: 获取失败\n"
+
+        for evt in catalysts.events:
+            if evt.category == "commodity":
+                continue  # already shown as LME price above
+            brief_text += f"  📅 [{evt.expected_date}] {evt.name}\n"
+            brief_text += f"     {evt.description[:80]}\n"
+
+    if t0_advice and t0_advice.has_position:
+        brief_text += f"\n  ── T+0 操作建议 (持仓: {t0_advice.quantity}股 @ ¥{t0_advice.cost:.1f}) ──\n"
+        brief_text += f"  浮盈亏: {t0_advice.pnl_pct:+.1f}%  (成本{t0_advice.cost:.1f} → 现价{t0_advice.current_price:.2f})\n"
+        if t0_advice.t0_enabled:
+            brief_text += f"  策略: {t0_advice.strategy}\n"
+            brief_text += f"  做T仓位: {t0_advice.t0_lot}股 (总仓位的{t0_advice.t0_lot/t0_advice.quantity*100:.0f}%)\n"
+            if t0_advice.sell_lot2 > 0:
+                brief_text += f"  分批高抛: 第1批{t0_advice.sell_lot1}股@¥{t0_advice.sell_zone_low:.2f}  "
+                brief_text += f"第2批{t0_advice.sell_lot2}股@¥{t0_advice.sell_zone_high:.2f}\n"
+            else:
+                brief_text += f"  高抛区间: ¥{t0_advice.sell_zone_low:.2f} - ¥{t0_advice.sell_zone_high:.2f}\n"
+            brief_text += f"  低吸区间: ¥{t0_advice.buy_zone_low:.2f} - ¥{t0_advice.buy_zone_high:.2f}\n"
+            brief_text += f"  止损价:   ¥{t0_advice.stop_loss:.2f}\n"
+            if t0_advice.risk_note:
+                brief_text += f"  ⚠ {t0_advice.risk_note}\n"
+            for sig in t0_advice.signals:
+                brief_text += f"    • {sig}\n"
+            if t0_advice.escape_plan:
+                brief_text += "  ── 卖飞应对 ──\n"
+                for plan in t0_advice.escape_plan:
+                    brief_text += f"    → {plan}\n"
+        else:
+            brief_text += f"  ✗ {t0_advice.strategy}\n"
+            if t0_advice.risk_note:
+                brief_text += f"  ⚠ {t0_advice.risk_note}\n"
+            for sig in t0_advice.signals:
+                brief_text += f"    • {sig}\n"
+
     brief_text += f"""
   ── REGIME ({current_regime['trend']} / {current_regime['rsi']}) ──
 {regime_line}
@@ -301,7 +370,7 @@ def synthesize(
 {'═' * 56}
 """
 
-    violations = validate_grounding(brief_text, agent_results, backtest_results, regime_match)
+    violations = validate_grounding(brief_text, agent_results, backtest_results, regime_match, catalysts)
     if violations:
         logger.warning("Grounding violations found: %s", violations)
 

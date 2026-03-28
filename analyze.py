@@ -14,14 +14,18 @@ import config
 from data.store import (
     get_connection, init_db, save_ohlcv, load_ohlcv,
     save_indicators, load_indicators, save_agent_run, save_brief,
+    load_position, save_position,
 )
 from data.fetcher import fetch_incremental
 from data.indicators import compute_all
 from agents.technical import analyze as analyze_technical
 from agents.fundamental import analyze as analyze_fundamental
 from agents.strategist import synthesize, classify_regime, match_historical_regime
+from agents.t0_advisor import advise as advise_t0
 from data.fundamental import fetch_fundamentals
+from data.catalysts import fetch_catalysts
 from backtest.engine import run_all_strategies
+from backtest.t0_backtest import run_t0_backtest, format_t0_backtest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -119,6 +123,38 @@ def step_analyze(conn, backtest_results: list) -> None:
     regime_match = match_historical_regime(indicators, ohlcv, regime)
     logger.info("Regime: %s, matches: %d", regime, regime_match["count"])
 
+    logger.info("Fetching catalysts & commodity prices...")
+    try:
+        catalysts = fetch_catalysts()
+        if catalysts.lme_nickel_usd:
+            logger.info("LME Nickel: $%.0f/ton", catalysts.lme_nickel_usd)
+        for err in catalysts.fetch_errors:
+            logger.warning("Catalyst fetch issue: %s", err)
+    except Exception as e:
+        logger.warning("Catalyst fetch failed (non-fatal): %s", e)
+        catalysts = None
+
+    logger.info("Generating T+0 advice...")
+    position = load_position(conn)
+    t0_advice = None
+    if position:
+        latest_ind = indicators.iloc[-1]
+        t0_advice = advise_t0(
+            position=position,
+            latest_price=latest_price,
+            atr=float(latest_ind.get("atr14", 0)),
+            support=tech_result.details.get("support", 0),
+            resistance=tech_result.details.get("resistance", 0),
+            boll_upper=float(latest_ind.get("boll_upper", 0)),
+            boll_mid=float(latest_ind.get("boll_mid", 0)),
+            boll_lower=float(latest_ind.get("boll_lower", 0)),
+            tech_score=tech_result.score,
+            regime=regime,
+        )
+        logger.info("T+0: %s, lot=%d", t0_advice.strategy, t0_advice.t0_lot)
+    else:
+        logger.info("No position found, skipping T+0 advice")
+
     logger.info("Synthesizing morning brief...")
     brief = synthesize(
         agent_results=agent_results,
@@ -126,6 +162,8 @@ def step_analyze(conn, backtest_results: list) -> None:
         regime_match=regime_match,
         current_regime=regime,
         latest_price=latest_price,
+        catalysts=catalysts,
+        t0_advice=t0_advice,
     )
 
     save_brief(
@@ -147,10 +185,41 @@ def main():
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch data")
     parser.add_argument("--backtest", action="store_true", help="Run backtests only")
     parser.add_argument("--no-fetch", action="store_true", help="Skip data fetch")
+    parser.add_argument("--set-position", nargs=2, metavar=("QUANTITY", "COST"),
+                        help="Record position, e.g. --set-position 1000 65.3")
+    parser.add_argument("--backtest-t0", action="store_true",
+                        help="Run T+0 strategy backtest on historical data")
     args = parser.parse_args()
 
     conn = get_connection()
     init_db(conn)
+
+    if args.set_position:
+        qty, cost = int(args.set_position[0]), float(args.set_position[1])
+        save_position(conn, config.TICKER, cost, qty)
+        logger.info("Position saved: %d shares @ ¥%.2f", qty, cost)
+        pos = load_position(conn)
+        print(f"✓ 持仓已记录: {config.TICKER} {config.TICKER_NAME} — {pos['quantity']}股 @ ¥{pos['cost']:.2f}")
+        conn.close()
+        return
+
+    if args.backtest_t0:
+        if not args.no_fetch:
+            step_fetch(conn)
+            step_indicators(conn)
+        ohlcv = load_ohlcv(conn)
+        if ohlcv.empty:
+            logger.error("No data for T+0 backtest.")
+            conn.close()
+            return
+        pos = load_position(conn)
+        qty = pos["quantity"] if pos else 1000
+        cost = pos["cost"] if pos else 65.3
+        logger.info("Running T+0 backtest (position: %d shares @ ¥%.2f)...", qty, cost)
+        result = run_t0_backtest(ohlcv, position_qty=qty, position_cost=cost)
+        print(format_t0_backtest(result))
+        conn.close()
+        return
 
     if args.fetch_only:
         step_fetch(conn)

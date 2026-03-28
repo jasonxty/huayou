@@ -74,6 +74,33 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def load_position(conn: sqlite3.Connection, ticker: str = config.TICKER) -> dict | None:
+    """Load the latest position for a ticker. Returns dict or None."""
+    row = conn.execute(
+        "SELECT ticker, entry_price, quantity, entry_date, notes "
+        "FROM positions WHERE ticker = ? ORDER BY id DESC LIMIT 1",
+        (ticker,),
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "ticker": row[0], "cost": float(row[1]),
+        "quantity": int(row[2]), "entry_date": row[3], "notes": row[4],
+    }
+
+
+def save_position(conn: sqlite3.Connection, ticker: str, cost: float,
+                  quantity: int, entry_date: str = "", notes: str = "") -> None:
+    """Upsert position for a ticker (keeps only the latest)."""
+    conn.execute("DELETE FROM positions WHERE ticker = ?", (ticker,))
+    conn.execute(
+        "INSERT INTO positions (ticker, entry_price, quantity, entry_date, notes) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ticker, cost, quantity, entry_date, notes),
+    )
+    conn.commit()
+
+
 def save_ohlcv(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
     """Upsert OHLCV rows. Returns number of new rows inserted."""
     if df.empty:
