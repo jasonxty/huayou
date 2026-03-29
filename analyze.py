@@ -16,7 +16,7 @@ import config
 from data.store import (
     get_connection, init_db, save_ohlcv, load_ohlcv,
     save_indicators, load_indicators, save_agent_run, save_brief,
-    load_position, save_position,
+    load_position, save_position, record_t0_trade,
 )
 from data.fetcher import fetch_incremental
 from data.indicators import compute_all
@@ -86,14 +86,14 @@ def step_backtest(conn) -> list:
     return results
 
 
-def step_analyze(conn, backtest_results: list) -> None:
-    """Run Technical Analyst + Chief Strategist and print morning brief."""
+def _run_analysis(conn, backtest_results: list) -> dict | None:
+    """Run all agents and synthesize brief. Returns brief dict or None."""
     ohlcv = load_ohlcv(conn)
     indicators = load_indicators(conn)
 
     if ohlcv.empty or indicators.empty:
         logger.error("No data available for analysis.")
-        return
+        return None
 
     latest_price = float(ohlcv.iloc[-1]["close"])
     agent_results = []
@@ -173,6 +173,14 @@ def step_analyze(conn, backtest_results: list) -> None:
         brief["confidence"], brief["risk_level"],
         brief["brief_text"], brief,
     )
+    return brief
+
+
+def step_analyze(conn, backtest_results: list) -> None:
+    """Run analysis pipeline and print morning brief."""
+    brief = _run_analysis(conn, backtest_results)
+    if brief is None:
+        return
 
     print(brief["brief_text"])
 
@@ -191,10 +199,14 @@ def main():
                         help="Record position, e.g. --set-position 1000 65.3")
     parser.add_argument("--backtest-t0", action="store_true",
                         help="Run T+0 strategy backtest on historical data")
+    parser.add_argument("--t0-done", nargs=3, metavar=("SELL_PRICE", "BUY_PRICE", "QTY"),
+                        help="Record a completed T+0 trade, e.g. --t0-done 62.5 60.0 200")
     parser.add_argument("--monitor", action="store_true",
                         help="Start real-time T+0 price monitor with WeChat push")
     parser.add_argument("--test-push", action="store_true",
                         help="Send a test notification to WeChat via Server酱")
+    parser.add_argument("--push-brief", action="store_true",
+                        help="Run full pipeline then push morning brief to WeChat")
     args = parser.parse_args()
 
     if args.test_push:
@@ -207,8 +219,37 @@ def main():
         run_monitor()
         return
 
+    if args.push_brief:
+        conn = get_connection()
+        init_db(conn)
+        step_fetch(conn)
+        step_indicators(conn)
+        bt_results = step_backtest(conn)
+        brief = _run_analysis(conn, bt_results)
+        conn.close()
+        if brief:
+            from monitor import send_wechat
+            title = f"📈 {config.TICKER_NAME}晨报"
+            body = brief["brief_text"].replace("═", "-").replace("──", "--")
+            result = send_wechat(title, body)
+            if result.success:
+                print("✓ 晨报已推送到微信")
+            else:
+                print(f"✗ 推送失败: {result.message}")
+        return
+
     conn = get_connection()
     init_db(conn)
+
+    if args.t0_done:
+        sell_p, buy_p, qty = float(args.t0_done[0]), float(args.t0_done[1]), int(args.t0_done[2])
+        result = record_t0_trade(conn, sell_p, buy_p, qty)
+        print(f"✓ T+0交易已记录:")
+        print(f"  卖出 {qty}股 @ ¥{sell_p:.2f} → 买回 @ ¥{buy_p:.2f}")
+        print(f"  毛利: ¥{result['profit'] + result['fee']:.2f}  手续费: ¥{result['fee']:.2f}  净利: ¥{result['profit']:.2f}")
+        print(f"  持仓成本: ¥{result['cost_before']:.4f} → ¥{result['cost_after']:.4f}")
+        conn.close()
+        return
 
     if args.set_position:
         qty, cost = int(args.set_position[0]), float(args.set_position[1])

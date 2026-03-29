@@ -24,6 +24,7 @@ import requests
 
 import config
 from data.store import get_connection, init_db, load_ohlcv, load_indicators, load_position
+from data.holidays import is_trading_day
 from data.indicators import compute_all
 from agents.technical import analyze as analyze_technical
 from agents.t0_advisor import advise as advise_t0, T0Advice
@@ -303,6 +304,10 @@ def print_status(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
 
 def run_monitor(once: bool = False) -> None:
     """Main monitoring loop."""
+    if not is_trading_day():
+        logger.info("Non-trading day (holiday/weekend). Exiting.")
+        return
+
     logger.info("Computing T+0 advice from latest data...")
     advice = compute_t0_advice()
     if advice is None:

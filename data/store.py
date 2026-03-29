@@ -70,6 +70,19 @@ def init_db(conn: sqlite3.Connection) -> None:
             ticker TEXT, entry_price REAL, quantity INTEGER,
             entry_date TEXT, notes TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS t0_trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_date TEXT,
+            ticker TEXT,
+            sell_price REAL,
+            buy_price REAL,
+            quantity INTEGER,
+            profit REAL,
+            cost_before REAL,
+            cost_after REAL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
 
@@ -99,6 +112,45 @@ def save_position(conn: sqlite3.Connection, ticker: str, cost: float,
         (ticker, cost, quantity, entry_date, notes),
     )
     conn.commit()
+
+
+def record_t0_trade(conn: sqlite3.Connection, sell_price: float, buy_price: float,
+                    quantity: int, ticker: str = config.TICKER) -> dict:
+    """Record a completed T+0 trade and auto-update position cost.
+
+    A T+0 trade = sell `quantity` shares at `sell_price`, buy back at `buy_price`.
+    Profit = (sell - buy) * quantity * (1 - fee).
+    New cost = old_cost - profit / total_shares.
+
+    Returns dict with trade details and updated position.
+    """
+    FEE_RATE = 0.001  # ~0.1% round-trip (commission + stamp tax)
+    position = load_position(conn, ticker)
+    if position is None:
+        raise ValueError(f"No position found for {ticker}")
+
+    gross = (sell_price - buy_price) * quantity
+    fee = abs(sell_price * quantity + buy_price * quantity) * FEE_RATE
+    profit = gross - fee
+    cost_before = position["cost"]
+    total_shares = position["quantity"]
+    cost_after = round(cost_before - profit / total_shares, 4)
+
+    conn.execute(
+        "INSERT INTO t0_trades (trade_date, ticker, sell_price, buy_price, "
+        "quantity, profit, cost_before, cost_after) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (pd.Timestamp.now().strftime("%Y-%m-%d"), ticker,
+         sell_price, buy_price, quantity, round(profit, 2),
+         cost_before, cost_after),
+    )
+    save_position(conn, ticker, cost_after, total_shares)
+
+    return {
+        "sell_price": sell_price, "buy_price": buy_price,
+        "quantity": quantity, "profit": round(profit, 2),
+        "fee": round(fee, 2), "cost_before": cost_before,
+        "cost_after": cost_after,
+    }
 
 
 def save_ohlcv(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
