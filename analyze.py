@@ -7,6 +7,7 @@ Usage:
     python analyze.py --backtest     # Run backtests only, show results
     python analyze.py --monitor      # Start real-time T+0 price monitor + WeChat push
     python analyze.py --test-push    # Test WeChat push notification
+    python analyze.py --performance  # Show recommendation performance tracker
 """
 
 import argparse
@@ -26,6 +27,7 @@ from agents.strategist import synthesize, classify_regime, match_historical_regi
 from agents.t0_advisor import advise as advise_t0
 from data.fundamental import fetch_fundamentals
 from data.catalysts import fetch_catalysts
+from data.news import fetch_news
 from backtest.engine import run_all_strategies
 from backtest.t0_backtest import run_t0_backtest, format_t0_backtest
 
@@ -136,6 +138,19 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         logger.warning("Catalyst fetch failed (non-fatal): %s", e)
         catalysts = None
 
+    logger.info("Fetching news sentiment...")
+    try:
+        news_sentiment = fetch_news()
+        if news_sentiment.items:
+            logger.info("News: %d items, sentiment %.2f (%d bull / %d bear)",
+                        len(news_sentiment.items), news_sentiment.overall_score,
+                        news_sentiment.bullish_count, news_sentiment.bearish_count)
+        if news_sentiment.fetch_error:
+            logger.warning("News fetch issue: %s", news_sentiment.fetch_error)
+    except Exception as e:
+        logger.warning("News fetch failed (non-fatal): %s", e)
+        news_sentiment = None
+
     logger.info("Generating T+0 advice...")
     position = load_position(conn)
     t0_advice = None
@@ -166,6 +181,7 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         latest_price=latest_price,
         catalysts=catalysts,
         t0_advice=t0_advice,
+        news_sentiment=news_sentiment,
     )
 
     save_brief(
@@ -207,7 +223,21 @@ def main():
                         help="Send a test notification to WeChat via Server酱")
     parser.add_argument("--push-brief", action="store_true",
                         help="Run full pipeline then push morning brief to WeChat")
+    parser.add_argument("--performance", action="store_true",
+                        help="Show recommendation performance (brief vs actual returns)")
     args = parser.parse_args()
+
+    if args.performance:
+        from data.performance import compute_performance, format_performance
+        conn = get_connection()
+        init_db(conn)
+        if not args.no_fetch:
+            step_fetch(conn)
+            step_indicators(conn)
+        summary = compute_performance(conn)
+        print(format_performance(summary))
+        conn.close()
+        return
 
     if args.test_push:
         from monitor import test_push

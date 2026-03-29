@@ -31,6 +31,12 @@ class CatalystSnapshot:
     lme_nickel_cny: float | None = None  # RMB-equivalent quote
     nickel_change_pct: float | None = None  # daily change %
     nickel_fetch_time: str = ""
+
+    shfe_nickel: float | None = None  # SHFE沪镍主力, CNY/ton
+    shfe_nickel_chg: float | None = None  # daily change CNY
+    lithium_carbonate: float | None = None  # GFEX碳酸锂主力, CNY/ton
+    lithium_carbonate_chg: float | None = None  # daily change CNY
+
     events: list[CatalystEvent] = field(default_factory=list)
     fetch_errors: list[str] = field(default_factory=list)
 
@@ -114,6 +120,26 @@ def _fetch_lme_nickel() -> tuple[float | None, float | None, float | None, str]:
         return None, None, None, ""
 
 
+def _fetch_domestic_futures(symbol: str, name: str) -> tuple[float | None, float | None]:
+    """Fetch latest domestic futures close and daily change from Sina.
+
+    Returns (close_price, change_from_prev_close).
+    """
+    try:
+        df = ak.futures_main_sina(symbol=symbol)
+        if df.empty or len(df) < 2:
+            return None, None
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+        close = float(latest["收盘价"])
+        prev_close = float(prev["收盘价"])
+        change = round(close - prev_close, 0)
+        return close, change
+    except Exception as e:
+        logger.warning("Failed to fetch %s (%s): %s", name, symbol, e)
+        return None, None
+
+
 def fetch_catalysts() -> CatalystSnapshot:
     """Gather all catalyst data: commodity prices + upcoming events."""
     snap = CatalystSnapshot()
@@ -124,9 +150,18 @@ def fetch_catalysts() -> CatalystSnapshot:
     snap.lme_nickel_cny = cny
     snap.nickel_change_pct = chg
     snap.nickel_fetch_time = ftime
-
     if usd is None:
         snap.fetch_errors.append("LME镍价获取失败")
+
+    logger.info("Fetching SHFE nickel (ni0)...")
+    snap.shfe_nickel, snap.shfe_nickel_chg = _fetch_domestic_futures("ni0", "沪镍")
+    if snap.shfe_nickel is None:
+        snap.fetch_errors.append("沪镍主力获取失败")
+
+    logger.info("Fetching lithium carbonate (lc0)...")
+    snap.lithium_carbonate, snap.lithium_carbonate_chg = _fetch_domestic_futures("lc0", "碳酸锂")
+    if snap.lithium_carbonate is None:
+        snap.fetch_errors.append("碳酸锂主力获取失败")
 
     snap.events = _get_upcoming_events()
 

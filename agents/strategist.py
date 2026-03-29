@@ -18,6 +18,7 @@ from agents.base import AgentResult
 from agents.t0_advisor import T0Advice
 from backtest.engine import BacktestResult
 from data.catalysts import CatalystSnapshot
+from data.news import NewsSentiment
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,8 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
                     pass
 
     cleaned = re.sub(r"\d{4}-\d{2}-\d{2}", "", brief_text)
-    cleaned = re.sub(r"── KEY CATALYSTS.*?── REGIME", "── REGIME", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── KEY CATALYSTS.*?── (NEWS|T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── NEWS SENTIMENT.*?── (T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"── T\+0.*?── REGIME", "── REGIME", cleaned, flags=re.DOTALL)
     cleaned = cleaned.replace(",", "")
     found_numbers = re.findall(r"[\d]+\.?\d*", cleaned)
@@ -227,6 +229,7 @@ def synthesize(
     latest_price: float,
     catalysts: CatalystSnapshot | None = None,
     t0_advice: T0Advice | None = None,
+    news_sentiment: NewsSentiment | None = None,
     analysis_date: str | None = None,
 ) -> dict:
     """Produce the morning brief. Pure rule-based, no LLM needed."""
@@ -325,11 +328,29 @@ def synthesize(
         else:
             brief_text += "  LME镍价: 获取失败\n"
 
+        if catalysts.shfe_nickel:
+            chg = f"  {catalysts.shfe_nickel_chg:+.0f}" if catalysts.shfe_nickel_chg else ""
+            brief_text += f"  沪镍主力: ¥{catalysts.shfe_nickel:,.0f}/吨{chg}\n"
+        if catalysts.lithium_carbonate:
+            chg = f"  {catalysts.lithium_carbonate_chg:+.0f}" if catalysts.lithium_carbonate_chg else ""
+            brief_text += f"  碳酸锂主力: ¥{catalysts.lithium_carbonate:,.0f}/吨{chg}\n"
+
         for evt in catalysts.events:
             if evt.category == "commodity":
-                continue  # already shown as LME price above
+                continue
             brief_text += f"  📅 [{evt.expected_date}] {evt.name}\n"
             brief_text += f"     {evt.description[:80]}\n"
+
+    if news_sentiment and news_sentiment.items:
+        ns = news_sentiment
+        label_map = {True: "偏多", False: "偏空"}
+        label = "偏多" if ns.overall_score > 0.1 else ("偏空" if ns.overall_score < -0.1 else "中性")
+        brief_text += f"\n  ── NEWS SENTIMENT (舆情: {label}) ──\n"
+        brief_text += f"  近7日新闻: {len(ns.items)}条  利好{ns.bullish_count} / 利空{ns.bearish_count} / 中性{ns.neutral_count}\n"
+        for it in ns.items[:5]:
+            icon = "🟢" if it.sentiment_label == "利好" else ("🔴" if it.sentiment_label == "利空" else "⚪")
+            title_short = it.title[:35] + "..." if len(it.title) > 35 else it.title
+            brief_text += f"  {icon} [{it.source}] {title_short}\n"
 
     if t0_advice and t0_advice.has_position:
         brief_text += f"\n  ── T+0 操作建议 (持仓: {t0_advice.quantity}股 @ ¥{t0_advice.cost:.1f}) ──\n"

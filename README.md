@@ -1,8 +1,8 @@
 # 华友钴业 (603799) AI Analyst
 
-Rule-based single-stock trading intelligence for 603799 华友钴业. Fetches real market data, computes 20 technical indicators, runs fundamental analysis, tracks commodity catalysts, generates T+0 intraday trading advice, and produces a daily morning brief — all locally, no API keys needed.
+Rule-based single-stock trading intelligence for 603799 华友钴业. Fetches real market data, computes 20 technical indicators, runs fundamental analysis, tracks commodity catalysts (LME镍/沪镍/碳酸锂), monitors news sentiment, generates T+0 intraday trading advice, and produces a daily morning brief — all locally, no API keys needed.
 
-Real-time price monitoring with automatic WeChat push notifications when T+0 thresholds are hit.
+Real-time price monitoring with automatic WeChat push notifications when T+0 thresholds are hit. Built-in performance tracking to measure recommendation accuracy over time.
 
 ## Quick Start
 
@@ -31,6 +31,7 @@ python analyze.py --fetch-only     # Update data only
 python analyze.py --backtest       # Run backtests only
 python analyze.py --no-fetch       # Skip fetch, use cached data
 python analyze.py --push-brief     # Run pipeline + push brief to WeChat
+python analyze.py --performance    # Recommendation accuracy tracker
 
 # Position management
 python analyze.py --set-position 1000 65.3    # Record holding
@@ -58,8 +59,10 @@ huayou-analyst/
 │   ├── store.py            # SQLite schema + CRUD (OHLCV, positions, T+0 trades)
 │   ├── indicators.py       # 20 technical indicators via pandas-ta
 │   ├── fundamental.py      # Fundamental data (financials, valuation, margins)
-│   ├── catalysts.py        # LME nickel price + catalyst event calendar
-│   └── holidays.py         # A-share holiday calendar (2026)
+│   ├── catalysts.py        # LME镍 + 沪镍 + 碳酸锂 + catalyst calendar
+│   ├── news.py             # News sentiment (keyword-based scoring)
+│   ├── holidays.py         # A-share holiday calendar (2026)
+│   └── performance.py      # Recommendation performance tracker
 ├── agents/
 │   ├── base.py             # AgentResult dataclass
 │   ├── technical.py        # Technical scoring (MA, MACD, RSI, KDJ, Bollinger, volume)
@@ -82,7 +85,8 @@ huayou-analyst/
 | ACTION | BUY / HOLD / SELL with confidence % and risk level |
 | TECHNICAL | 6 sub-scorers: MA alignment, MACD, RSI, KDJ, Bollinger, volume |
 | FUNDAMENTAL | PE/PB, margins, ROE, revenue growth, cycle analysis |
-| KEY CATALYSTS | LME nickel price, upcoming policy/earnings events |
+| KEY CATALYSTS | LME镍, 沪镍主力, 碳酸锂主力, upcoming events |
+| NEWS SENTIMENT | Recent news with keyword sentiment (利好/利空/中性) |
 | T+0 ADVICE | Split-batch sell/buy zones, stop-loss, escape plan |
 | REGIME | Historical pattern matching with forward return stats |
 | BACKTEST | 5 strategies: MA crossover, MACD, volume breakout, RSI, mean reversion |
@@ -129,7 +133,8 @@ python analyze.py --t0-done 62.5 60.0 200
 
 | Source | Data | Refresh |
 |--------|------|---------|
-| [AKShare](https://github.com/akfamily/akshare) | OHLCV, fundamentals, LME nickel | Daily |
+| [AKShare](https://github.com/akfamily/akshare) | OHLCV, fundamentals, LME镍, news | Daily |
+| [Sina Finance](https://finance.sina.com.cn) | 沪镍/碳酸锂期货主力 | Daily |
 | [Eastmoney](https://push2.eastmoney.com) | Real-time quotes (monitor) | 30s |
 | [Server酱](https://sct.ftqq.com) | WeChat push notifications | On trigger |
 | SQLite (local) | Indicators, briefs, positions, trades | Computed |
@@ -137,8 +142,18 @@ python analyze.py --t0-done 62.5 60.0 200
 ## Tests
 
 ```bash
-python -m pytest tests/ -v    # 75 tests, <2s
+python -m pytest tests/ -v    # 51+ tests, <2s
 ```
+
+## Performance Tracking
+
+Track how accurate the morning brief recommendations are over time:
+
+```bash
+python analyze.py --performance
+```
+
+Shows 1-day and 5-day forward returns for each brief, plus aggregate hit rate. Needs at least 2 days of data to start measuring.
 
 ## Setup: WeChat Push
 
