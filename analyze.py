@@ -2,9 +2,11 @@
 """华友钴业 (603799) AI Analyst — Daily Morning Brief
 
 Usage:
-    python analyze.py              # Full pipeline: fetch + analyze + backtest + brief
-    python analyze.py --fetch-only # Just update data, no analysis
-    python analyze.py --backtest   # Run backtests only, show results
+    python analyze.py                # Full pipeline: fetch + analyze + backtest + brief
+    python analyze.py --fetch-only   # Just update data, no analysis
+    python analyze.py --backtest     # Run backtests only, show results
+    python analyze.py --monitor      # Start real-time T+0 price monitor + WeChat push
+    python analyze.py --test-push    # Test WeChat push notification
 """
 
 import argparse
@@ -189,7 +191,21 @@ def main():
                         help="Record position, e.g. --set-position 1000 65.3")
     parser.add_argument("--backtest-t0", action="store_true",
                         help="Run T+0 strategy backtest on historical data")
+    parser.add_argument("--monitor", action="store_true",
+                        help="Start real-time T+0 price monitor with WeChat push")
+    parser.add_argument("--test-push", action="store_true",
+                        help="Send a test notification to WeChat via Server酱")
     args = parser.parse_args()
+
+    if args.test_push:
+        from monitor import test_push
+        test_push()
+        return
+
+    if args.monitor:
+        from monitor import run_monitor
+        run_monitor()
+        return
 
     conn = get_connection()
     init_db(conn)

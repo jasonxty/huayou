@@ -1,5 +1,7 @@
 .env
 .venv/
+config.yaml
+logs/
 huayou.db
 huayou.db-shm
 huayou.db-wal

@@ -3,3 +3,5 @@ pandas
 pandas-ta
 backtrader
 pytest
+requests
+pyyaml
