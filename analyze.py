@@ -225,7 +225,23 @@ def main():
                         help="Run full pipeline then push morning brief to WeChat")
     parser.add_argument("--performance", action="store_true",
                         help="Show recommendation performance (brief vs actual returns)")
+    parser.add_argument("--simulate", type=float, default=0, metavar="CAPITAL",
+                        help="Run full portfolio simulation (e.g. --simulate 100000)")
     args = parser.parse_args()
+
+    if args.simulate > 0:
+        from backtest.simulation import run_simulation, format_simulation
+        conn = get_connection()
+        init_db(conn)
+        if not args.no_fetch:
+            step_fetch(conn)
+            step_indicators(conn)
+        ohlcv = load_ohlcv(conn)
+        indicators = load_indicators(conn)
+        conn.close()
+        result = run_simulation(ohlcv, indicators, capital=args.simulate)
+        print(format_simulation(result))
+        return
 
     if args.performance:
         from data.performance import compute_performance, format_performance
