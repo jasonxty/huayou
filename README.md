@@ -1,8 +1,8 @@
 # 华友钴业 (603799) AI Analyst
 
-Rule-based single-stock trading intelligence for 603799 华友钴业. Fetches real market data, computes 20 technical indicators, runs fundamental analysis, tracks commodity catalysts (LME镍/沪镍/碳酸锂), monitors news sentiment, generates T+0 intraday trading advice, and produces a daily morning brief — all locally, no API keys needed.
+Rule-based single-stock trading intelligence for 603799 华友钴业. Fetches real market data, computes 20 technical indicators, runs fundamental analysis, tracks commodity catalysts (LME镍/沪镍/碳酸锂), monitors news sentiment, integrates TaoGuBa (淘股吧) expert opinions, generates T+0 intraday trading advice, and produces a daily morning brief — all locally, no API keys needed.
 
-Real-time price monitoring with automatic WeChat push notifications when T+0 thresholds are hit. Built-in performance tracking to measure recommendation accuracy over time.
+Real-time price monitoring with automatic WeChat push notifications when T+0 thresholds are hit. Built-in performance tracking to measure recommendation accuracy over time. Expert opinion tracking from TaoGuBa influences confidence scoring.
 
 ## Quick Start
 
@@ -32,6 +32,7 @@ python analyze.py --backtest       # Run backtests only
 python analyze.py --no-fetch       # Skip fetch, use cached data
 python analyze.py --push-brief     # Run pipeline + push brief to WeChat
 python analyze.py --performance    # Recommendation accuracy tracker
+python analyze.py --experts        # Show TaoGuBa expert opinions standalone
 
 # Position management
 python analyze.py --set-position 1000 65.3    # Record holding
@@ -61,6 +62,8 @@ huayou-analyst/
 │   ├── fundamental.py      # Fundamental data (financials, valuation, margins)
 │   ├── catalysts.py        # LME镍 + 沪镍 + 碳酸锂 + catalyst calendar
 │   ├── news.py             # News sentiment (keyword-based scoring)
+│   ├── taoguba.py          # TaoGuBa expert blog scraper + sentiment
+│   ├── taoguba_keywords.py # Expert-specific keyword dictionaries + signal extraction
 │   ├── holidays.py         # A-share holiday calendar (2026)
 │   └── performance.py      # Recommendation performance tracker
 ├── agents/
@@ -75,7 +78,7 @@ huayou-analyst/
 ├── scripts/
 │   └── start-monitor.sh    # Auto-start script for launchd
 ├── com.huayou.monitor.plist # macOS launchd config (auto-run Mon-Fri 9:20)
-└── tests/                  # 75 tests, <2s
+└── tests/                  # 150 tests, <4s
 ```
 
 ## What's in the Morning Brief
@@ -87,6 +90,7 @@ huayou-analyst/
 | FUNDAMENTAL | PE/PB, margins, ROE, revenue growth, cycle analysis |
 | KEY CATALYSTS | LME镍, 沪镍主力, 碳酸锂主力, upcoming events |
 | NEWS SENTIMENT | Recent news with keyword sentiment (利好/利空/中性) |
+| EXPERT OPINIONS | TaoGuBa expert consensus, signals, price targets |
 | T+0 ADVICE | Split-batch sell/buy zones, stop-loss, escape plan |
 | REGIME | Historical pattern matching with forward return stats |
 | BACKTEST | 5 strategies: MA crossover, MACD, volume breakout, RSI, mean reversion |
@@ -137,13 +141,46 @@ python analyze.py --t0-done 62.5 60.0 200
 | [Sina Finance](https://finance.sina.com.cn) | 沪镍/碳酸锂期货主力 | Daily |
 | [Eastmoney](https://push2.eastmoney.com) | Real-time quotes (monitor) | 30s |
 | [Server酱](https://sct.ftqq.com) | WeChat push notifications | On trigger |
-| SQLite (local) | Indicators, briefs, positions, trades | Computed |
+| [TaoGuBa](https://www.tgb.cn) | Expert blog posts (keyword sentiment) | Daily |
+| SQLite (local) | Indicators, briefs, positions, trades, expert cache | Computed |
 
 ## Tests
 
 ```bash
-python -m pytest tests/ -v    # 51+ tests, <2s
+python -m pytest tests/ -v    # 150 tests, <4s
 ```
+
+## Expert Tracking (淘股吧)
+
+Track trading opinions from followed experts on TaoGuBa. Expert consensus adjusts confidence (not the action itself):
+
+- 2/3+ experts agree with technical signals: confidence +8%
+- 2/3+ experts contradict: confidence -8% + divergence warning
+- Split or insufficient data: no adjustment
+
+### Setup
+
+Add experts to `config.yaml`:
+
+```yaml
+taoguba:
+  enabled: true
+  experts:
+    - id: "12345"        # Expert's TaoGuBa user ID
+      name: "某大神A"     # Display name
+    - id: "67890"
+      name: "某大神B"
+  max_post_age_days: 3   # Only consider posts within this window
+  request_delay_seconds: 3  # Polite scraping delay between requests
+```
+
+View expert opinions standalone:
+
+```bash
+python analyze.py --experts
+```
+
+Posts are cached in SQLite to avoid redundant scraping. Anti-scraping measures: random User-Agent rotation, 2-5s delays between requests, max 5-10 requests per run.
 
 ## Performance Tracking
 

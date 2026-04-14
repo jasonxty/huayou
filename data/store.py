@@ -4,9 +4,24 @@ import json
 import sqlite3
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 import config
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    """Handle numpy types that stdlib json can't serialize."""
+    def default(self, o):
+        if isinstance(o, (np.bool_,)):
+            return bool(o)
+        if isinstance(o, (np.integer,)):
+            return int(o)
+        if isinstance(o, (np.floating,)):
+            return float(o)
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
 
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
@@ -82,6 +97,20 @@ def init_db(conn: sqlite3.Connection) -> None:
             cost_before REAL,
             cost_after REAL,
             created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS expert_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expert_id TEXT,
+            expert_name TEXT,
+            post_date TEXT,
+            title TEXT,
+            content TEXT,
+            url TEXT,
+            sentiment_score REAL,
+            signals_json TEXT,
+            fetched_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(expert_id, url)
         );
     """)
     conn.commit()
@@ -231,7 +260,7 @@ def save_agent_run(conn: sqlite3.Connection, run_date: str, agent: str,
                    score: float, output: dict) -> None:
     conn.execute(
         "INSERT INTO agent_runs (run_date, agent, score, output_json) VALUES (?, ?, ?, ?)",
-        (run_date, agent, score, json.dumps(output, ensure_ascii=False)),
+        (run_date, agent, score, json.dumps(output, ensure_ascii=False, cls=_NumpyEncoder)),
     )
     conn.commit()
 
@@ -244,6 +273,6 @@ def save_brief(conn: sqlite3.Connection, date: str, action: str,
            (date, action, confidence, risk_level, brief_text, agent_summary_json)
            VALUES (?, ?, ?, ?, ?, ?)""",
         (date, action, confidence, risk_level, brief_text,
-         json.dumps(agent_summary, ensure_ascii=False)),
+         json.dumps(agent_summary, ensure_ascii=False, cls=_NumpyEncoder)),
     )
     conn.commit()

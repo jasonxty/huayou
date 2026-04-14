@@ -19,6 +19,7 @@ from agents.t0_advisor import T0Advice
 from backtest.engine import BacktestResult
 from data.catalysts import CatalystSnapshot
 from data.news import NewsSentiment
+from data.taoguba import ExpertSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +163,9 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
                     pass
 
     cleaned = re.sub(r"\d{4}-\d{2}-\d{2}", "", brief_text)
-    cleaned = re.sub(r"── KEY CATALYSTS.*?── (NEWS|T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
-    cleaned = re.sub(r"── NEWS SENTIMENT.*?── (T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── KEY CATALYSTS.*?── (NEWS|EXPERT|T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── NEWS SENTIMENT.*?── (EXPERT|T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── EXPERT OPINIONS.*?── (T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"── T\+0.*?── REGIME", "── REGIME", cleaned, flags=re.DOTALL)
     cleaned = cleaned.replace(",", "")
     found_numbers = re.findall(r"[\d]+\.?\d*", cleaned)
@@ -219,6 +221,45 @@ def _decide_action(tech_score: float, regime: dict, regime_match: dict,
     return action, risk
 
 
+# ── Expert confidence adjustment ──
+
+def _expert_confidence_adjustment(snapshot: ExpertSnapshot | None,
+                                  tech_score: float) -> float:
+    """Adjust confidence based on expert consensus.
+
+    Rules:
+    - Need at least 2 experts with recent posts to have an opinion
+    - If 2/3+ experts align with technical direction: +0.08
+    - If 2/3+ experts contradict technical direction: -0.08 (divergence warning)
+    - Split opinions or insufficient data: no adjustment
+    """
+    if not snapshot or not snapshot.posts:
+        return 0.0
+
+    unique_experts = {p.expert_id for p in snapshot.posts}
+    if len(unique_experts) < 2:
+        return 0.0
+
+    total = snapshot.bullish_count + snapshot.bearish_count + snapshot.neutral_count
+    if total == 0:
+        return 0.0
+
+    tech_bullish = tech_score > 0
+    expert_bullish_ratio = snapshot.bullish_count / total
+    expert_bearish_ratio = snapshot.bearish_count / total
+
+    if tech_bullish and expert_bullish_ratio >= 2 / 3:
+        return 0.08
+    if not tech_bullish and expert_bearish_ratio >= 2 / 3:
+        return 0.08
+    if tech_bullish and expert_bearish_ratio >= 2 / 3:
+        return -0.08
+    if not tech_bullish and expert_bullish_ratio >= 2 / 3:
+        return -0.08
+
+    return 0.0
+
+
 # ── Synthesis ──
 
 def synthesize(
@@ -230,6 +271,7 @@ def synthesize(
     catalysts: CatalystSnapshot | None = None,
     t0_advice: T0Advice | None = None,
     news_sentiment: NewsSentiment | None = None,
+    expert_snapshot: ExpertSnapshot | None = None,
     analysis_date: str | None = None,
 ) -> dict:
     """Produce the morning brief. Pure rule-based, no LLM needed."""
@@ -258,6 +300,9 @@ def synthesize(
     support = tech_result.details.get("support", "N/A") if tech_result else "N/A"
     resistance = tech_result.details.get("resistance", "N/A") if tech_result else "N/A"
     atr = tech_result.details.get("atr14", "N/A") if tech_result else "N/A"
+
+    expert_adj = _expert_confidence_adjustment(expert_snapshot, tech_score)
+    confidence = max(0.30, min(0.90, confidence + expert_adj))
 
     action, risk_level = _decide_action(tech_score, current_regime, regime_match, best_strategy)
 
@@ -351,6 +396,39 @@ def synthesize(
             icon = "🟢" if it.sentiment_label == "利好" else ("🔴" if it.sentiment_label == "利空" else "⚪")
             title_short = it.title[:35] + "..." if len(it.title) > 35 else it.title
             brief_text += f"  {icon} [{it.source}] {title_short}\n"
+
+    if expert_snapshot and expert_snapshot.posts:
+        es = expert_snapshot
+        total_e = es.bullish_count + es.bearish_count + es.neutral_count
+        if es.consensus_score > 0.1:
+            consensus_label = "偏多"
+        elif es.consensus_score < -0.1:
+            consensus_label = "偏空"
+        else:
+            consensus_label = "中性"
+        bull_bear_str = f"{es.bullish_count}/{total_e}"
+        brief_text += f"\n  ── EXPERT OPINIONS (淘股吧大神: {consensus_label} {bull_bear_str}) ──\n"
+        brief_text += (f"  近{3}日 {es.total_experts_checked}位大神发帖, "
+                       f"看多{es.bullish_count} / 看空{es.bearish_count} / 中性{es.neutral_count}\n")
+
+        seen_experts: set[str] = set()
+        for p in es.posts[:5]:
+            if p.expert_id in seen_experts:
+                continue
+            seen_experts.add(p.expert_id)
+            title_short = p.title[:40] + "..." if len(p.title) > 40 else p.title
+            brief_text += f'  [{p.expert_name}] {p.publish_time[:10]}: "{title_short}"\n'
+            sig_parts = []
+            for act in p.signals.actions[:3]:
+                sig_parts.append(act)
+            for label, price in list(p.signals.price_targets.items())[:3]:
+                sig_parts.append(f"{label}¥{price:.0f}")
+            sig_parts.append(p.sentiment_label)
+            brief_text += f"     信号: {' | '.join(sig_parts)}\n"
+
+        if expert_adj != 0:
+            direction = "一致" if expert_adj > 0 else "分歧"
+            brief_text += f"  → 大神观点与技术面{direction}, confidence {expert_adj:+.0%}\n"
 
     if t0_advice and t0_advice.has_position:
         brief_text += f"\n  ── T+0 操作建议 (持仓: {t0_advice.quantity}股 @ ¥{t0_advice.cost:.1f}) ──\n"

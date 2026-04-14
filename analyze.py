@@ -28,6 +28,8 @@ from agents.t0_advisor import advise as advise_t0
 from data.fundamental import fetch_fundamentals
 from data.catalysts import fetch_catalysts
 from data.news import fetch_news
+from data.taoguba import fetch_expert_posts
+from brief_html import save_html_brief
 from backtest.engine import run_all_strategies
 from backtest.t0_backtest import run_t0_backtest, format_t0_backtest
 
@@ -151,6 +153,28 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         logger.warning("News fetch failed (non-fatal): %s", e)
         news_sentiment = None
 
+    logger.info("Fetching expert opinions (淘股吧)...")
+    expert_snapshot = None
+    try:
+        tgb_cfg = config.get_taoguba_config()
+        if tgb_cfg["enabled"] and tgb_cfg["experts"]:
+            expert_snapshot = fetch_expert_posts(
+                experts=tgb_cfg["experts"],
+                max_age_days=tgb_cfg["max_post_age_days"],
+                request_delay=tgb_cfg["request_delay_seconds"],
+                conn=conn,
+            )
+            if expert_snapshot.posts:
+                logger.info("Experts: %d posts, consensus %.2f (%d bull / %d bear)",
+                            len(expert_snapshot.posts), expert_snapshot.consensus_score,
+                            expert_snapshot.bullish_count, expert_snapshot.bearish_count)
+            for err in expert_snapshot.fetch_errors:
+                logger.warning("Expert fetch issue: %s", err)
+        else:
+            logger.info("TaoGuBa tracking disabled or no experts configured")
+    except Exception as e:
+        logger.warning("Expert fetch failed (non-fatal): %s", e)
+
     logger.info("Generating T+0 advice...")
     position = load_position(conn)
     t0_advice = None
@@ -182,6 +206,7 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         catalysts=catalysts,
         t0_advice=t0_advice,
         news_sentiment=news_sentiment,
+        expert_snapshot=expert_snapshot,
     )
 
     save_brief(
@@ -192,7 +217,7 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
     return brief
 
 
-def step_analyze(conn, backtest_results: list) -> None:
+def step_analyze(conn, backtest_results: list, *, open_html: bool = False) -> None:
     """Run analysis pipeline and print morning brief."""
     brief = _run_analysis(conn, backtest_results)
     if brief is None:
@@ -204,6 +229,12 @@ def step_analyze(conn, backtest_results: list) -> None:
         print(f"\n⚠ Grounding violations: {len(brief['grounding_violations'])}")
         for v in brief["grounding_violations"]:
             print(f"  - {v}")
+
+    if open_html:
+        import subprocess
+        html_path = save_html_brief(brief)
+        logger.info("HTML brief saved: %s", html_path)
+        subprocess.run(["open", str(html_path)], check=False)
 
 
 def main():
@@ -227,7 +258,51 @@ def main():
                         help="Show recommendation performance (brief vs actual returns)")
     parser.add_argument("--simulate", type=float, default=0, metavar="CAPITAL",
                         help="Run full portfolio simulation (e.g. --simulate 100000)")
+    parser.add_argument("--experts", action="store_true",
+                        help="Show TaoGuBa expert opinions standalone")
+    parser.add_argument("--html", action="store_true",
+                        help="Generate HTML brief and open in browser")
     args = parser.parse_args()
+
+    if args.experts:
+        tgb_cfg = config.get_taoguba_config()
+        if not tgb_cfg["enabled"] or not tgb_cfg["experts"]:
+            print("淘股吧追踪未启用或未配置专家。请编辑 config.yaml 中的 taoguba 部分。")
+            return
+        conn = get_connection()
+        init_db(conn)
+        snapshot = fetch_expert_posts(
+            experts=tgb_cfg["experts"],
+            max_age_days=tgb_cfg["max_post_age_days"],
+            request_delay=tgb_cfg["request_delay_seconds"],
+            conn=conn,
+        )
+        conn.close()
+        if not snapshot.posts:
+            print(f"近{tgb_cfg['max_post_age_days']}日无相关发帖")
+            if snapshot.fetch_errors:
+                for err in snapshot.fetch_errors:
+                    print(f"  ⚠ {err}")
+            return
+        total = snapshot.bullish_count + snapshot.bearish_count + snapshot.neutral_count
+        print(f"\n{'─' * 56}")
+        print(f"  淘股吧大神观点 — 603799 华友钴业")
+        print(f"{'─' * 56}")
+        print(f"  共{len(snapshot.posts)}条帖子, 看多{snapshot.bullish_count} / "
+              f"看空{snapshot.bearish_count} / 中性{snapshot.neutral_count}")
+        print(f"  综合评分: {snapshot.consensus_score:+.2f}\n")
+        for p in snapshot.posts:
+            icon = "🟢" if p.sentiment_label == "看多" else ("🔴" if p.sentiment_label == "看空" else "⚪")
+            print(f"  {icon} [{p.expert_name}] {p.publish_time}")
+            print(f"     {p.title[:50]}")
+            if p.signals.actions:
+                print(f"     动作: {', '.join(p.signals.actions)}")
+            if p.signals.price_targets:
+                targets = [f"{k}¥{v:.0f}" for k, v in p.signals.price_targets.items()]
+                print(f"     价位: {', '.join(targets)}")
+            print()
+        print(f"{'─' * 56}")
+        return
 
     if args.simulate > 0:
         from backtest.simulation import run_simulation, format_simulation
@@ -343,7 +418,7 @@ def main():
         step_indicators(conn)
 
     bt_results = step_backtest(conn)
-    step_analyze(conn, bt_results)
+    step_analyze(conn, bt_results, open_html=args.html)
 
     conn.close()
 
