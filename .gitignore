@@ -2,6 +2,7 @@
 .venv/
 config.yaml
 logs/
+briefs/
 huayou.db
 huayou.db-shm
 huayou.db-wal

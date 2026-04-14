@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.huayou.monitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst/scripts/start-monitor.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst</string>
+
+    <!-- 周一到周五 9:20 启动（开盘前5分钟，先推晨报再监控） -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key><integer>1</integer>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>2</integer>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>3</integer>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>4</integer>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>5</integer>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst/logs/monitor-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst/logs/monitor-stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NUMBA_CACHE_DIR</key>
+        <string>/tmp/numba_cache</string>
+    </dict>
+</dict>
+</plist>

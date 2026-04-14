@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, date
@@ -137,6 +138,47 @@ def send_wechat(title: str, content: str = "") -> PushResult:
         return PushResult(False, str(e))
 
 
+# ── macOS desktop notification ─────────────────────────────────────────
+
+def notify_macos(title: str, body: str, *, sound: str = "Glass",
+                 urgent: bool = False) -> None:
+    """Show a macOS notification center popup with sound."""
+    safe_title = title.replace('"', '\\"')
+    safe_body = body.replace('"', '\\"')
+    sound_name = "Sosumi" if urgent else sound
+    script = (f'display notification "{safe_body}" '
+              f'with title "{safe_title}" '
+              f'sound name "{sound_name}"')
+    try:
+        subprocess.run(["osascript", "-e", script],
+                       capture_output=True, timeout=5, check=False)
+    except Exception as e:
+        logger.warning("macOS notification failed: %s", e)
+
+
+def alert_dialog_macos(title: str, body: str, *,
+                       icon: str = "caution") -> None:
+    """Show a blocking macOS dialog that stays on screen until dismissed.
+
+    Args:
+        icon: "caution" (⚠️ yellow), "stop" (🛑 red), "note" (ℹ️ blue)
+    """
+    safe_title = title.replace('"', '\\"')
+    safe_body = body.replace('"', '\\"')
+    script = (f'tell application "System Events"\n'
+              f'  activate\n'
+              f'  display dialog "{safe_body}" '
+              f'with title "{safe_title}" '
+              f'buttons {{"知道了"}} default button 1 '
+              f'with icon {icon}\n'
+              f'end tell')
+    try:
+        subprocess.run(["osascript", "-e", script],
+                       capture_output=True, timeout=120, check=False)
+    except Exception as e:
+        logger.warning("macOS dialog failed: %s", e)
+
+
 # ── Alert tracker (daily quota + per-alert dedup) ──────────────────────
 
 ALERT_SELL1 = "sell_zone_1"
@@ -216,13 +258,16 @@ def compute_t0_advice() -> T0Advice | None:
         conn.close()
 
 
-def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
-    """Check if current price triggers any T+0 alerts and push."""
+def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker,
+                  *, enable_popup: bool = True) -> None:
+    """Check if current price triggers any T+0 alerts; push + popup."""
     if not advice.t0_enabled:
         return
 
     price = quote.price
-    alerts: list[tuple[str, str, str]] = []
+    chg = f"+{quote.change_pct:.2f}" if quote.change_pct >= 0 else f"{quote.change_pct:.2f}"
+    alerts: list[tuple[str, str, str, str, bool]] = []
+    # Each: (alert_id, wechat_title, wechat_body, popup_body, is_critical)
 
     if price >= advice.sell_zone_high and not tracker.has_fired(ALERT_SELL2):
         alerts.append((
@@ -231,7 +276,9 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
             (f"**{config.TICKER_NAME} ¥{price:.2f}** 触及高抛第2批区间\n\n"
              f"- 建议卖出: **{advice.sell_lot2}股** @ ¥{advice.sell_zone_high:.2f}\n"
              f"- 成本: ¥{advice.cost:.2f} | 当前浮盈: {advice.pnl_pct:.1f}%\n"
-             f"- 剩余推送额度: {tracker.remaining() - 1}")
+             f"- 剩余推送额度: {tracker.remaining() - 1}"),
+            f"¥{price:.2f}({chg}%) 触及高抛第2批\n卖出 {advice.sell_lot2}股 @ ¥{advice.sell_zone_high:.2f}",
+            False,
         ))
     elif price >= advice.sell_zone_low and not tracker.has_fired(ALERT_SELL1):
         alerts.append((
@@ -240,7 +287,9 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
             (f"**{config.TICKER_NAME} ¥{price:.2f}** 触及高抛第1批区间\n\n"
              f"- 建议卖出: **{advice.sell_lot1}股** @ ¥{advice.sell_zone_low:.2f}\n"
              f"- 高抛第2批目标: ¥{advice.sell_zone_high:.2f}\n"
-             f"- 成本: ¥{advice.cost:.2f}")
+             f"- 成本: ¥{advice.cost:.2f}"),
+            f"¥{price:.2f}({chg}%) 触及高抛第1批\n卖出 {advice.sell_lot1}股 @ ¥{advice.sell_zone_low:.2f}",
+            False,
         ))
 
     if price <= advice.stop_loss and not tracker.has_fired(ALERT_STOP):
@@ -249,7 +298,9 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
             f"⛔ {config.TICKER_NAME}触及止损",
             (f"**{config.TICKER_NAME} ¥{price:.2f}** 跌破止损位 ¥{advice.stop_loss:.2f}\n\n"
              f"- 建议: 立即减仓或清仓\n"
-             f"- 持仓: {advice.quantity}股 @ ¥{advice.cost:.2f}")
+             f"- 持仓: {advice.quantity}股 @ ¥{advice.cost:.2f}"),
+            f"⚠️ ¥{price:.2f}({chg}%) 跌破止损 ¥{advice.stop_loss:.2f}\n立即减仓！持仓 {advice.quantity}股 @ ¥{advice.cost:.2f}",
+            True,
         ))
     elif price <= advice.buy_zone_high and not tracker.has_fired(ALERT_BUY):
         alerts.append((
@@ -258,7 +309,9 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
             (f"**{config.TICKER_NAME} ¥{price:.2f}** 进入低吸区间\n\n"
              f"- 建议买入: **{advice.t0_lot}股** @ ¥{advice.buy_zone_high:.2f}~¥{advice.buy_zone_low:.2f}\n"
              f"- 止损位: ¥{advice.stop_loss:.2f}\n"
-             f"- 成本: ¥{advice.cost:.2f}")
+             f"- 成本: ¥{advice.cost:.2f}"),
+            f"¥{price:.2f}({chg}%) 进入低吸区间\n买入 {advice.t0_lot}股 @ ¥{advice.buy_zone_high:.2f}~{advice.buy_zone_low:.2f}",
+            False,
         ))
 
     if price >= advice.breakout_price and not tracker.has_fired(ALERT_BREAKOUT):
@@ -268,20 +321,29 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
             (f"**{config.TICKER_NAME} ¥{price:.2f}** 突破关键阻力 ¥{advice.breakout_price:.2f}\n\n"
              f"- 若已卖出做T仓位: **今日不追回**，明日观察\n"
              f"- 若持仓未动: 继续持有，享受上涨\n"
-             f"- 剩余底仓: {advice.quantity - advice.t0_lot}股")
+             f"- 剩余底仓: {advice.quantity - advice.t0_lot}股"),
+            f"¥{price:.2f}({chg}%) 突破阻力 ¥{advice.breakout_price:.2f}\n已卖→不追，持仓→继续持有",
+            False,
         ))
 
-    for alert_id, title, body in alerts:
-        if not tracker.can_push():
-            logger.warning("Daily push limit (%d) reached, skipping: %s",
-                           config.MONITOR_DAILY_PUSH_LIMIT, title)
-            break
-        result = send_wechat(title, body)
-        if result.success:
-            tracker.record(alert_id)
-            logger.info("✓ Pushed: %s (remaining: %d)", title, tracker.remaining())
+    for alert_id, title, body, popup_body, is_critical in alerts:
+        # macOS弹窗（阻塞式，必须点击才消失）
+        if enable_popup:
+            icon = "stop" if is_critical else "note"
+            alert_dialog_macos(title, popup_body, icon=icon)
+
+        # WeChat push (quota limited)
+        if tracker.can_push():
+            result = send_wechat(title, body)
+            if result.success:
+                tracker.record(alert_id)
+                logger.info("✓ Pushed: %s (remaining: %d)", title, tracker.remaining())
+            else:
+                logger.error("✗ Push failed: %s — %s", title, result.message)
         else:
-            logger.error("✗ Push failed: %s — %s", title, result.message)
+            tracker.record(alert_id)
+            logger.warning("WeChat quota used up (%d), popup-only: %s",
+                           config.MONITOR_DAILY_PUSH_LIMIT, title)
 
 
 def print_status(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
@@ -302,11 +364,14 @@ def print_status(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:
 
 # ── Main loop ──────────────────────────────────────────────────────────
 
-def run_monitor(once: bool = False) -> None:
-    """Main monitoring loop."""
+def run_monitor(once: bool = False, *, enable_popup: bool = True,
+                interval: int | None = None) -> None:
+    """Main monitoring loop with macOS popup alerts."""
     if not is_trading_day():
         logger.info("Non-trading day (holiday/weekend). Exiting.")
         return
+
+    poll_interval = interval or config.MONITOR_INTERVAL
 
     logger.info("Computing T+0 advice from latest data...")
     advice = compute_t0_advice()
@@ -314,40 +379,65 @@ def run_monitor(once: bool = False) -> None:
         return
     if not advice.t0_enabled:
         logger.warning("T+0 not enabled today (strategy: %s). Monitoring skipped.", advice.strategy)
+        if enable_popup:
+            notify_macos(
+                f"📊 {config.TICKER_NAME} 监控",
+                f"今日策略: {advice.strategy}，不建议做T",
+            )
         return
 
     tracker = AlertTracker()
+    last_status_notify = 0.0
 
-    print(f"\n{'═' * 60}")
-    print(f"  {config.TICKER_NAME} ({config.TICKER}) T+0 实时监控")
-    print(f"{'═' * 60}")
-    print(f"  策略: {advice.strategy}")
-    print(f"  做T仓位: {advice.t0_lot}股 (总持仓{advice.quantity}股)")
-    print(f"  高抛区间: ¥{advice.sell_zone_low:.2f} ~ ¥{advice.sell_zone_high:.2f}")
-    print(f"    第1批: {advice.sell_lot1}股 @ ¥{advice.sell_zone_low:.2f}")
+    header = (
+        f"\n{'═' * 60}\n"
+        f"  {config.TICKER_NAME} ({config.TICKER}) T+0 实时监控\n"
+        f"{'═' * 60}\n"
+        f"  策略: {advice.strategy}\n"
+        f"  做T仓位: {advice.t0_lot}股 (总持仓{advice.quantity}股)\n"
+        f"  高抛区间: ¥{advice.sell_zone_low:.2f} ~ ¥{advice.sell_zone_high:.2f}\n"
+        f"    第1批: {advice.sell_lot1}股 @ ¥{advice.sell_zone_low:.2f}\n"
+    )
     if advice.sell_lot2 > 0:
-        print(f"    第2批: {advice.sell_lot2}股 @ ¥{advice.sell_zone_high:.2f}")
-    print(f"  低吸区间: ¥{advice.buy_zone_low:.2f} ~ ¥{advice.buy_zone_high:.2f}")
-    print(f"  止损价:   ¥{advice.stop_loss:.2f}")
-    print(f"  突破价:   ¥{advice.breakout_price:.2f}")
-    print(f"  每日推送额度: {config.MONITOR_DAILY_PUSH_LIMIT}次")
-    print(f"{'═' * 60}\n")
+        header += f"    第2批: {advice.sell_lot2}股 @ ¥{advice.sell_zone_high:.2f}\n"
+    header += (
+        f"  低吸区间: ¥{advice.buy_zone_low:.2f} ~ ¥{advice.buy_zone_high:.2f}\n"
+        f"  止损价:   ¥{advice.stop_loss:.2f}\n"
+        f"  突破价:   ¥{advice.breakout_price:.2f}\n"
+        f"  轮询间隔: {poll_interval}秒 | 弹窗提醒: {'开' if enable_popup else '关'}\n"
+        f"  每日推送额度: {config.MONITOR_DAILY_PUSH_LIMIT}次\n"
+        f"{'═' * 60}\n"
+    )
+    print(header)
+
+    if enable_popup:
+        notify_macos(
+            f"📊 {config.TICKER_NAME} 监控已启动",
+            (f"策略: {advice.strategy}\n"
+             f"卖区: ¥{advice.sell_zone_low:.2f}~{advice.sell_zone_high:.2f}\n"
+             f"买区: ¥{advice.buy_zone_low:.2f}~{advice.buy_zone_high:.2f}"),
+        )
 
     if once:
         quote = fetch_realtime_quote()
         if quote:
-            check_alerts(quote, advice, tracker)
+            check_alerts(quote, advice, tracker, enable_popup=enable_popup)
             print_status(quote, advice, tracker)
         else:
             logger.error("Failed to fetch quote.")
         return
 
-    logger.info("Entering monitoring loop (interval: %ds)...", config.MONITOR_INTERVAL)
+    logger.info("Entering monitoring loop (interval: %ds)...", poll_interval)
     while True:
         if not is_trading_time():
             now = datetime.now()
             if now.hour >= 15:
                 logger.info("Market closed for today. Exiting.")
+                if enable_popup:
+                    notify_macos(
+                        f"📊 {config.TICKER_NAME} 收盘",
+                        f"今日监控结束 | 已触发: {len(tracker.fired)}个信号",
+                    )
                 break
             logger.info("Outside trading hours. Waiting...")
             time.sleep(60)
@@ -355,12 +445,35 @@ def run_monitor(once: bool = False) -> None:
 
         quote = fetch_realtime_quote()
         if quote and quote.price > 0:
-            check_alerts(quote, advice, tracker)
+            check_alerts(quote, advice, tracker, enable_popup=enable_popup)
             print_status(quote, advice, tracker)
+
+            # Periodic status popup (every MONITOR_STATUS_INTERVAL)
+            if enable_popup:
+                now_ts = time.time()
+                if now_ts - last_status_notify >= config.MONITOR_STATUS_INTERVAL:
+                    chg = f"+{quote.change_pct:.2f}" if quote.change_pct >= 0 else f"{quote.change_pct:.2f}"
+                    dist_sell = ((advice.sell_zone_low - quote.price) / quote.price * 100)
+                    dist_buy = ((quote.price - advice.buy_zone_high) / quote.price * 100)
+                    status_parts = [f"¥{quote.price:.2f}({chg}%)"]
+                    if dist_sell > 0:
+                        status_parts.append(f"距高抛 {dist_sell:.1f}%")
+                    else:
+                        status_parts.append("已进入高抛区间！")
+                    if dist_buy > 0:
+                        status_parts.append(f"距低吸 {dist_buy:.1f}%")
+                    else:
+                        status_parts.append("已进入低吸区间！")
+                    notify_macos(
+                        f"📊 {config.TICKER_NAME} {datetime.now().strftime('%H:%M')}",
+                        " | ".join(status_parts),
+                        sound="Pop",
+                    )
+                    last_status_notify = now_ts
         else:
             logger.warning("Quote unavailable, retrying next cycle.")
 
-        time.sleep(config.MONITOR_INTERVAL)
+        time.sleep(poll_interval)
 
 
 def test_push() -> None:
@@ -386,19 +499,33 @@ def test_push() -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="华友钴业 T+0 实时监控 + 微信推送",
+        description="华友钴业 T+0 实时监控 + macOS弹窗 + 微信推送",
     )
     parser.add_argument("--test-push", action="store_true",
                         help="发送测试通知到微信")
+    parser.add_argument("--test-popup", action="store_true",
+                        help="发送测试macOS弹窗")
     parser.add_argument("--once", action="store_true",
                         help="检查一次就退出（不循环）")
+    parser.add_argument("--no-popup", action="store_true",
+                        help="关闭macOS弹窗提醒（只保留终端+微信）")
+    parser.add_argument("--interval", type=int, default=None,
+                        help=f"轮询间隔秒数 (默认 {config.MONITOR_INTERVAL})")
     args = parser.parse_args()
 
     if args.test_push:
         test_push()
         return
+    if args.test_popup:
+        notify_macos(
+            f"📊 {config.TICKER_NAME} 弹窗测试",
+            "如果你看到这条通知，弹窗功能正常！",
+        )
+        print("✓ macOS弹窗已发送，检查通知中心。")
+        return
 
-    run_monitor(once=args.once)
+    run_monitor(once=args.once, enable_popup=not args.no_popup,
+                interval=args.interval)
 
 
 if __name__ == "__main__":
