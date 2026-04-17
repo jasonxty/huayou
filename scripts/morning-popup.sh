@@ -45,9 +45,9 @@ else
     exit 0
 fi
 
-# Step 2: 生成晨报 + HTML
+# Step 2: 生成晨报 + 推送微信
 echo "[$(date +%H:%M:%S)] Generating morning brief..." >> "$LOG"
-BRIEF_OUTPUT=$("$PYTHON" "$DIR/analyze.py" --html 2>> "$LOG")
+BRIEF_OUTPUT=$(NUMBA_CACHE_DIR=/tmp/numba_cache "$PYTHON" "$DIR/analyze.py" --push-brief 2>> "$LOG")
 EXIT_CODE=$?
 
 if [ $EXIT_CODE -ne 0 ]; then
@@ -68,12 +68,8 @@ echo "[$(date +%H:%M:%S)] Brief generated: $NOTIFY_BODY" >> "$LOG"
 # Step 4: macOS 通知弹窗
 osascript -e "display notification \"$NOTIFY_BODY\" with title \"📈 华友钴业晨报\" subtitle \"$TODAY\" sound name \"Glass\""
 
-# Step 5: 打开 HTML 晨报
-if [ -f "$HTML_FILE" ]; then
-    open "$HTML_FILE"
-    echo "[$(date +%H:%M:%S)] Opened HTML brief in browser." >> "$LOG"
-else
-    echo "[$(date +%H:%M:%S)] HTML file not found: $HTML_FILE" >> "$LOG"
-fi
+# Step 5: 打开 Dashboard 网页
+open "http://127.0.0.1:8600/brief/$TODAY"
+echo "[$(date +%H:%M:%S)] Opened dashboard in browser." >> "$LOG"
 
 echo "=== $(date) — 晨报弹窗完成 ===" >> "$LOG"

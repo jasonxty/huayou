@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{# Dual-track comparison hero — auto-refresh every 60s #}
+<div id="comparison-hero-section"
+     hx-get="/api/comparison-hero" hx-trigger="every 60s" hx-swap="innerHTML">
+  {% include "partials/comparison_hero.html" %}
+</div>
+
+{# Portfolio cards — auto-refresh every 30s #}
+<div id="portfolio-section"
+     hx-get="/api/portfolio" hx-trigger="every 30s" hx-swap="innerHTML">
+  {% include "partials/portfolio.html" %}
+</div>
+
+{# Tabs with ARIA roles and keyboard nav #}
+<div class="tabs" id="tab-nav" role="tablist" aria-label="Dashboard tabs">
+  <div class="tab active" role="tab" tabindex="0" aria-selected="true"
+       aria-controls="tab-strategic" onclick="switchTab('strategic')">Strategic</div>
+  <div class="tab" role="tab" tabindex="-1" aria-selected="false"
+       aria-controls="tab-tactical" onclick="switchTab('tactical')">Tactical</div>
+  <div class="tab" role="tab" tabindex="-1" aria-selected="false"
+       aria-controls="tab-trades" onclick="switchTab('trades')">Trades</div>
+  <div class="tab" role="tab" tabindex="-1" aria-selected="false"
+       aria-controls="tab-t0" onclick="switchTab('t0')">T+0</div>
+  <div class="tab" role="tab" tabindex="-1" aria-selected="false"
+       aria-controls="tab-alerts" onclick="switchTab('alerts')">Alerts</div>
+  <div class="tab" role="tab" tabindex="-1" aria-selected="false"
+       aria-controls="tab-briefs" onclick="switchTab('briefs')">Briefs</div>
+</div>
+
+<div class="tab-content" id="tab-panel">
+  <div id="tab-strategic" role="tabpanel">
+    {% include "partials/strategic_comparison.html" %}
+  </div>
+  <div id="tab-tactical" role="tabpanel" style="display:none">
+    {% include "partials/tactical_comparison.html" %}
+  </div>
+  <div id="tab-trades" role="tabpanel" style="display:none">
+    {% include "partials/trade_form.html" %}
+    <div id="trade-table">
+      {% include "partials/trades.html" %}
+    </div>
+  </div>
+  <div id="tab-t0" role="tabpanel" style="display:none">
+    {% include "partials/t0_form.html" %}
+    <div id="t0-table">
+      {% include "partials/t0_trades.html" %}
+    </div>
+  </div>
+  <div id="tab-alerts" role="tabpanel" style="display:none">
+    {% include "partials/alerts.html" %}
+  </div>
+  <div id="tab-briefs" role="tabpanel" style="display:none">
+    {% include "partials/briefs.html" %}
+  </div>
+</div>
+
+{# Reflection note modal #}
+<div id="note-modal" class="note-modal" style="display:none">
+  <div class="note-modal-content">
+    <h3>Reflection Note</h3>
+    <p id="note-context" style="color:var(--text-muted);font-size:13px;margin-bottom:12px"></p>
+    <textarea id="note-text" class="note-textarea" rows="4"
+              placeholder="Write down your thinking at the time... e.g. 'Thought it would keep going up' or 'Fees were too high to act'"></textarea>
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" onclick="closeNote()">Cancel</button>
+      <button class="btn btn-primary btn-sm" onclick="saveNote()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TAB_NAMES = ['strategic', 'tactical', 'trades', 't0', 'alerts', 'briefs'];
+
+function switchTab(name) {
+  const navItems = document.querySelectorAll('#tab-nav .tab');
+  TAB_NAMES.forEach((t, i) => {
+    const panel = document.getElementById('tab-' + t);
+    const show = t === name;
+    panel.style.display = show ? '' : 'none';
+    navItems[i].classList.toggle('active', show);
+    navItems[i].setAttribute('aria-selected', show ? 'true' : 'false');
+    navItems[i].setAttribute('tabindex', show ? '0' : '-1');
+  });
+  try { localStorage.setItem('huayou-tab', name); } catch(e) {}
+}
+
+document.getElementById('tab-nav').addEventListener('keydown', function(e) {
+  const tabs = Array.from(this.querySelectorAll('.tab'));
+  const idx = tabs.indexOf(document.activeElement);
+  if (idx < 0) return;
+  let next = idx;
+  if (e.key === 'ArrowRight') next = (idx + 1) % tabs.length;
+  else if (e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length;
+  else if (e.key === 'Enter' || e.key === ' ') { tabs[idx].click(); e.preventDefault(); return; }
+  else return;
+  e.preventDefault();
+  tabs[next].focus();
+  tabs[next].click();
+});
+
+try {
+  const saved = localStorage.getItem('huayou-tab');
+  if (saved && TAB_NAMES.includes(saved)) switchTab(saved);
+} catch(e) {}
+
+let _noteDate = '', _noteType = '', _noteRef = '';
+
+function openNote(date, type, ref, btn) {
+  _noteDate = date; _noteType = type; _noteRef = ref;
+  document.getElementById('note-context').textContent = date + ' \u00b7 ' + (type === 'strategic' ? 'Strategic' : 'Tactical');
+  const existing = btn.parentElement.querySelector('.has-note');
+  document.getElementById('note-text').value = existing ? existing.title : '';
+  document.getElementById('note-modal').style.display = 'flex';
+  document.getElementById('note-text').focus();
+}
+
+function closeNote() {
+  document.getElementById('note-modal').style.display = 'none';
+}
+
+function saveNote() {
+  const text = document.getElementById('note-text').value.trim();
+  fetch('/notes', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: 'note_date=' + encodeURIComponent(_noteDate) +
+          '&note_type=' + encodeURIComponent(_noteType) +
+          '&ref_id=' + encodeURIComponent(_noteRef) +
+          '&note_text=' + encodeURIComponent(text)
+  }).then(r => {
+    if (r.ok) {
+      closeNote();
+      if (_noteType === 'strategic') {
+        htmx.ajax('GET', '/api/strategic-comparison', '#tab-strategic');
+      } else {
+        htmx.ajax('GET', '/api/tactical-comparison', '#tab-tactical');
+      }
+    }
+  });
+}
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeNote();
+});
+</script>
+
+{% endblock %}

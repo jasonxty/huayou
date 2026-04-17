@@ -1,0 +1,49 @@
+{% set s = alert_stats %}
+<div class="stats">
+  <div class="stat-card total"><div class="num">{{ s.total }}</div><div class="label">Total Alerts</div></div>
+  <div class="stat-card days"><div class="num">{{ s.unique_days }}</div><div class="label">Trading Days</div></div>
+  <div class="stat-card sell"><div class="num">{{ s.sell_count }}</div><div class="label">Sell High</div></div>
+  <div class="stat-card buy"><div class="num">{{ s.buy_count }}</div><div class="label">Buy Low</div></div>
+  <div class="stat-card stop"><div class="num">{{ s.stop_count }}</div><div class="label">Stop Loss</div></div>
+  <div class="stat-card breakout"><div class="num">{{ s.breakout_count }}</div><div class="label">Breakout</div></div>
+</div>
+
+<section>
+  <h2>T+0 Alert History <span>Latest 200</span></h2>
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Time</th><th>Type</th><th>Trigger Price</th>
+      <th>Recommendation</th><th>Target Range</th><th>Cost / Unrealized</th><th>Channel</th>
+    </tr></thead>
+    <tbody>
+    {% if s.alerts %}
+      {% for a in s.alerts %}
+      {% set icon_data = alert_icons.get(a.alert_type, ('?', a.alert_type, '#666')) %}
+      {% set chg = a.change_pct or 0 %}
+      {% set chg_str = ("+%.2f%%"|format(chg)) if chg >= 0 else ("%.2f%%"|format(chg)) %}
+      {% set chg_cls = 'up' if chg >= 0 else 'down' %}
+      {% set pnl = a.pnl_pct or 0 %}
+      {% set pnl_str = ("+%.1f%%"|format(pnl)) if pnl >= 0 else ("%.1f%%"|format(pnl)) %}
+      {% set pnl_cls = 'up' if pnl >= 0 else 'down' %}
+      <tr>
+        <td class="date">{{ a.alert_date }}</td>
+        <td class="time">{{ a.alert_time }}</td>
+        <td><span class="badge" style="background:{{ icon_data[2] }}">{{ icon_data[0] }} {{ icon_data[1] }}</span></td>
+        <td class="price">&#165;{{ "%.2f"|format(a.price) }} <span class="{{ chg_cls }}">{{ chg_str }}</span></td>
+        <td>{{ a.action }}<br><small>{{ a.quantity }} shares @ &#165;{{ "%.2f"|format(a.target_price) }}</small></td>
+        <td>&#165;{{ "%.2f"|format(a.zone_low) }}~&#165;{{ "%.2f"|format(a.zone_high) }}</td>
+        <td>&#165;{{ "%.2f"|format(a.cost) }} <span class="{{ pnl_cls }}">{{ pnl_str }}</span></td>
+        <td class="channels">
+          {% if a.popup_sent %}&#x1F4BB;{% endif %}
+          {% if a.wechat_sent %}&#x1F4F1;{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="8" class="empty">No alerts recorded yet. Alerts are auto-logged during market hours.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</section>

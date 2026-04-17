@@ -1,0 +1,31 @@
+<section>
+  <h2>Brief History <span>Last 60 Days</span></h2>
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Recommendation</th><th>Confidence</th><th>Risk</th><th>Detail</th>
+    </tr></thead>
+    <tbody>
+    {% if briefs %}
+      {% for b in briefs %}
+      {% set action = b.action or 'N/A' %}
+      {% set action_word = action.split('(')[0].strip() if '(' in action else action.split()[0] %}
+      {% set action_cls = {'BUY': 'buy', 'SELL': 'sell', 'HOLD': 'hold'}.get(action_word, '') %}
+      {% set conf = b.confidence or 0 %}
+      {% set risk = b.risk_level or 'N/A' %}
+      {% set risk_cls = {'LOW': 'low', 'MEDIUM': 'med', 'HIGH': 'high'}.get(risk, '') %}
+      <tr>
+        <td class="date">{{ b.date }}</td>
+        <td class="action-cell {{ action_cls }}">{{ action }}</td>
+        <td>{{ "%.0f"|format(conf * 100) }}%</td>
+        <td class="risk {{ risk_cls }}">{{ risk }}</td>
+        <td><a href="/brief/{{ b.date }}" class="view-link">View &rarr;</a></td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="5" class="empty">No briefs recorded yet</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</section>

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+
+{% block title %}Brief {{ brief.date }} — {{ ticker_name }}{% endblock %}
+
+{% block content %}
+
+<section>
+  <h2>Morning Brief &mdash; {{ brief.date }}
+    <span>
+      <span class="action-cell {{ action_cls }}">{{ brief.action or 'N/A' }}</span>
+      &middot; Confidence {{ "%.0f"|format((brief.confidence or 0) * 100) }}%
+      &middot; Risk <span class="risk {{ risk_cls }}">{{ brief.risk_level or 'N/A' }}</span>
+    </span>
+  </h2>
+  <div style="white-space:pre-wrap; font-family:'SF Mono','Fira Code',monospace; font-size:13px; line-height:1.8; color:var(--text-secondary);">{{ brief.brief_text }}</div>
+</section>
+
+<div style="text-align:center; margin-top:16px;">
+  <a href="/" class="view-link">&larr; Back to Dashboard</a>
+</div>
+
+{% endblock %}

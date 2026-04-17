@@ -1,0 +1,28 @@
+{% set sys_cls = 'profit' if hero.system_pnl > 0 else ('loss' if hero.system_pnl < 0 else 'neutral') %}
+{% set usr_cls = 'profit' if hero.user_pnl > 0 else ('loss' if hero.user_pnl < 0 else 'neutral') %}
+{% set sys_sign = '+' if hero.system_pnl > 0 else '' %}
+{% set usr_sign = '+' if hero.user_pnl > 0 else '' %}
+
+<div class="comparison-hero">
+  <div class="cmp-card {{ sys_cls }}">
+    <div class="cmp-label">System P&amp;L</div>
+    <div class="cmp-val">{{ sys_sign }}&#165;{{ "{:,.0f}".format(hero.system_pnl) }}</div>
+    <div class="cmp-sub">{{ sys_sign }}{{ "%.2f"|format(hero.system_pnl_pct) }}%</div>
+    <div class="cmp-meta">{{ hero.brief_count }} briefs &middot; {{ hero.alert_count }} alerts</div>
+  </div>
+  <div class="cmp-card {{ usr_cls }}">
+    <div class="cmp-label">My Actual P&amp;L</div>
+    <div class="cmp-val">{{ usr_sign }}&#165;{{ "{:,.0f}".format(hero.user_pnl) }}</div>
+    <div class="cmp-sub">{{ usr_sign }}{{ "%.2f"|format(hero.user_pnl_pct) }}%</div>
+    <div class="cmp-meta">Adoption {{ "%.0f"|format(hero.adopt_rate) }}% &middot; Follow {{ "%.0f"|format(hero.follow_rate) }}%</div>
+  </div>
+  <div class="cmp-card cmp-delta {{ 'user-lead' if hero.leader == 'user' else ('sys-lead' if hero.leader == 'system' else 'neutral') }}">
+    <div class="cmp-label">Delta</div>
+    <div class="cmp-val">&#165;{{ "{:,.0f}".format(hero.delta|abs) }}</div>
+    <div class="cmp-sub">
+      {% if hero.leader == 'system' %}System leads
+      {% elif hero.leader == 'user' %}You lead &#x1F451;
+      {% else %}Even{% endif %}
+    </div>
+  </div>
+</div>

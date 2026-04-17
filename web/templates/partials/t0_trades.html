@@ -1,0 +1,29 @@
+<section>
+  <h2>T+0 Trade Log <span>Intraday Swing Trades</span></h2>
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Sell Price</th><th>Buyback Price</th><th>Qty</th>
+      <th>Profit</th><th>Cost Change</th>
+    </tr></thead>
+    <tbody>
+    {% if t0_trades %}
+      {% for t in t0_trades %}
+      {% set p_cls = 'up' if t.profit >= 0 else 'down' %}
+      {% set p_sign = '+' if t.profit >= 0 else '' %}
+      <tr>
+        <td class="date">{{ t.trade_date }}</td>
+        <td class="price">&#165;{{ "%.2f"|format(t.sell_price) }}</td>
+        <td class="price">&#165;{{ "%.2f"|format(t.buy_price) }}</td>
+        <td>{{ t.quantity }}</td>
+        <td class="{{ p_cls }} mono">{{ p_sign }}&#165;{{ "%.0f"|format(t.profit) }}</td>
+        <td class="mono">&#165;{{ "%.2f"|format(t.cost_before) }} &rarr; &#165;{{ "%.2f"|format(t.cost_after) }}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="6" class="empty">No T+0 trades recorded yet</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</section>

@@ -1,0 +1,62 @@
+{% set s = tactical.stats %}
+<div class="stats-bar">
+  <span class="stat-pill">Alerts {{ s.total_alerts }}</span>
+  <span class="stat-pill adopt">Followed {{ s.follow_count }} ({{ "%.0f"|format(s.follow_rate) }}%)</span>
+  <span class="stat-pill diverge">Skipped {{ s.skip_count }}</span>
+  <span class="stat-pill">Alert P&amp;L {{ '+' if tactical.alert_total_pnl >= 0 else '' }}&#165;{{ "{:,.0f}".format(tactical.alert_total_pnl) }}</span>
+  <span class="stat-pill">Your P&amp;L {{ '+' if tactical.user_t0_total_pnl >= 0 else '' }}&#165;{{ "{:,.0f}".format(tactical.user_t0_total_pnl) }}</span>
+</div>
+
+<section>
+  <h2>Tactical Comparison <span>Real-time Alerts vs Your T+0 Trades</span></h2>
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Time</th><th>Alert Type</th><th>Target Price</th>
+      <th>Your Action</th><th>Alert P&amp;L</th><th>Your P&amp;L</th><th>Delta</th><th>Notes</th>
+    </tr></thead>
+    <tbody>
+    {% if tactical.rows %}
+      {% for r in tactical.rows %}
+      {% set icon_data = alert_icons.get(r.alert_type, ('?', r.alert_type, '#666')) %}
+      {% set a_pnl_cls = 'up' if r.alert_pnl > 0 else ('down' if r.alert_pnl < 0 else '') %}
+      {% set u_pnl_cls = 'up' if r.user_pnl > 0 else ('down' if r.user_pnl < 0 else '') %}
+      {% set d_cls = 'up' if r.delta > 0 else ('down' if r.delta < 0 else '') %}
+      <tr class="{{ '' if r.followed else 'diverged' }}">
+        <td class="date">{{ r.date }}</td>
+        <td class="time">{{ r.time }}</td>
+        <td><span class="badge" style="background:{{ icon_data[2] }}">{{ icon_data[0] }} {{ icon_data[1] }}</span></td>
+        <td class="price">&#165;{{ "%.2f"|format(r.target_price) }}{% if r.zone %}<br><small>{{ r.zone }}</small>{% endif %}</td>
+        <td>
+          {% if r.followed %}
+            <span style="color:var(--loss)">{{ r.user_detail }}</span>
+          {% else %}
+            <span style="color:var(--text-muted)">Skipped</span>
+          {% endif %}
+        </td>
+        <td class="mono {{ a_pnl_cls }}">{% if r.alert_pnl != 0 %}{{ '+' if r.alert_pnl > 0 else '' }}&#165;{{ "{:,.0f}".format(r.alert_pnl) }}{% else %}&mdash;{% endif %}</td>
+        <td class="mono {{ u_pnl_cls }}">{% if r.user_pnl != 0 %}{{ '+' if r.user_pnl > 0 else '' }}&#165;{{ "{:,.0f}".format(r.user_pnl) }}{% else %}&mdash;{% endif %}</td>
+        <td class="mono {{ d_cls }}">{% if r.delta != 0 %}{{ '+' if r.delta > 0 else '' }}&#165;{{ "{:,.0f}".format(r.delta) }}{% else %}&mdash;{% endif %}</td>
+        <td class="note-cell">
+          {% if r.note %}
+            <span class="note-badge has-note" title="{{ r.note }}">&#x1F4DD;</span>
+          {% endif %}
+          <button class="btn-note" onclick="openNote('{{ r.date }}', 'tactical', '{{ r.alert_id }}', this)"
+                  title="Add reflection">&#x270F;&#xFE0F;</button>
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="9" class="empty">
+        {% if tactical.stats.total_alerts > 0 %}
+          The system has sent {{ tactical.stats.total_alerts }} T+0 alerts. Log your T+0 trades to compare.
+          <br><button class="btn btn-primary btn-sm" onclick="switchTab('t0')" style="margin-top:8px">Log T+0 Trade &rarr;</button>
+        {% else %}
+          No T+0 alerts recorded yet. Alerts are auto-logged during market hours.
+        {% endif %}
+      </td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</section>

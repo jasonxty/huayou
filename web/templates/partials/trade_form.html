@@ -1,0 +1,31 @@
+<section style="margin-bottom:16px">
+  <h2>Log Trade</h2>
+  <form hx-post="/trades" hx-target="#trade-table" hx-swap="innerHTML">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" name="trade_date" value="{{ today }}" required>
+      </div>
+      <div class="form-group">
+        <label>Side</label>
+        <select name="direction" required>
+          <option value="BUY">Buy</option>
+          <option value="SELL">Sell</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Price</label>
+        <input type="number" name="price" step="0.01" min="0" placeholder="56.50" required>
+      </div>
+      <div class="form-group">
+        <label>Quantity</label>
+        <input type="number" name="quantity" step="100" min="1" placeholder="300" required>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <input type="text" name="notes" placeholder="Optional">
+      </div>
+      <button type="submit" class="btn btn-primary">Submit</button>
+    </div>
+  </form>
+</section>

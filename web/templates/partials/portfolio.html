@@ -1,0 +1,33 @@
+{% set t0_cls = 'profit' if p.t0_total_profit >= 0 else 'loss' %}
+{% set t0_sign = '+' if p.t0_total_profit >= 0 else '' %}
+
+<div class="portfolio">
+  <div class="p-card neutral">
+    <div class="val">{{ p.qty }}</div>
+    <div class="lbl">Shares Held</div>
+  </div>
+  <div class="p-card neutral">
+    <div class="val">&#165;{{ "%.2f"|format(p.cost) }}</div>
+    <div class="lbl">Avg Cost</div>
+  </div>
+  <div class="p-card neutral">
+    <div class="val">&#165;{{ "%.2f"|format(p.latest_price) }}</div>
+    <div class="lbl">Latest Price ({{ price_date }})</div>
+  </div>
+  <div class="p-card neutral">
+    <div class="val">&#165;{{ "{:,.0f}".format(p.market_value) }}</div>
+    <div class="lbl">Market Value</div>
+  </div>
+  <div class="p-card neutral">
+    <div class="val">&#165;{{ "{:,.0f}".format(p.total_invested) }}</div>
+    <div class="lbl">Total Invested</div>
+  </div>
+  <div class="p-card neutral">
+    <div class="val">&#165;{{ "{:,.1f}".format(p.total_fees) }}</div>
+    <div class="lbl">Fees (Buy {{ "%.0f"|format(p.total_buy_fees) }} + Est. Sell {{ "%.0f"|format(p.est_sell_fee) }})</div>
+  </div>
+  <div class="p-card {{ t0_cls }}">
+    <div class="val">{{ t0_sign }}&#165;{{ "{:,.0f}".format(p.t0_total_profit) }}</div>
+    <div class="lbl">T+0 Cumulative P&amp;L</div>
+  </div>
+</div>

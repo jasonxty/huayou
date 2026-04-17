@@ -1,0 +1,63 @@
+{% set s = strategic.stats %}
+<div class="stats-bar">
+  <span class="stat-pill">Signals {{ s.total_signals }}</span>
+  <span class="stat-pill adopt">Adopted {{ s.match_count }} ({{ "%.0f"|format(s.adopt_rate) }}%)</span>
+  <span class="stat-pill diverge">Diverged {{ s.diverge_count }}</span>
+  <span class="stat-pill">System Wins {{ s.sys_win }}</span>
+  <span class="stat-pill">Your Wins {{ s.user_win }}</span>
+</div>
+
+<section>
+  <h2>Strategic Comparison <span>Brief Recommendations vs Your Trades</span></h2>
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Brief Action</th><th>Confidence</th><th>Your Action</th>
+      <th>System P&amp;L</th><th>Your P&amp;L</th><th>Delta</th><th>Notes</th>
+    </tr></thead>
+    <tbody>
+    {% if strategic.rows %}
+      {% for r in strategic.rows %}
+      {% set action_cls = {'BUY': 'buy', 'SELL': 'sell', 'HOLD': 'hold'}.get(r.sys_action, '') %}
+      {% set sys_pnl_cls = 'up' if r.sys_day_pnl > 0 else ('down' if r.sys_day_pnl < 0 else '') %}
+      {% set usr_pnl_cls = 'up' if r.user_day_pnl > 0 else ('down' if r.user_day_pnl < 0 else '') %}
+      {% set delta_cls = 'up' if r.delta > 0 else ('down' if r.delta < 0 else '') %}
+      <tr class="{{ '' if r.matched else 'diverged' }}">
+        <td class="date">{{ r.date }}</td>
+        <td class="action-cell {{ action_cls }}">{{ r.sys_action }}</td>
+        <td>{{ "%.0f"|format(r.confidence * 100) }}%</td>
+        <td>
+          {% if r.user_action == 'No Action' or r.user_action == '\u672a\u64cd\u4f5c' %}
+            <span style="color:var(--text-muted)">No Action</span>
+          {% else %}
+            <span class="action-cell {{ 'buy' if 'BUY' in r.user_action else 'sell' }}">{{ r.user_action }}</span>
+            {% if r.user_detail %}<br><small>{{ r.user_detail }}</small>{% endif %}
+          {% endif %}
+        </td>
+        <td class="mono {{ sys_pnl_cls }}">{% if r.sys_day_pnl != 0 %}{{ '+' if r.sys_day_pnl > 0 else '' }}&#165;{{ "{:,.0f}".format(r.sys_day_pnl) }}{% else %}&mdash;{% endif %}</td>
+        <td class="mono {{ usr_pnl_cls }}">{% if r.user_day_pnl != 0 %}{{ '+' if r.user_day_pnl > 0 else '' }}&#165;{{ "{:,.0f}".format(r.user_day_pnl) }}{% else %}&mdash;{% endif %}</td>
+        <td class="mono {{ delta_cls }}">{% if r.delta != 0 %}{{ '+' if r.delta > 0 else '' }}&#165;{{ "{:,.0f}".format(r.delta) }}{% else %}&mdash;{% endif %}</td>
+        <td class="note-cell">
+          {% if r.note %}
+            <span class="note-badge has-note" title="{{ r.note }}">&#x1F4DD;</span>
+          {% endif %}
+          <button class="btn-note" onclick="openNote('{{ r.date }}', 'strategic', 'brief', this)"
+                  title="Add reflection">&#x270F;&#xFE0F;</button>
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="8" class="empty">
+        The system has generated {{ strategic.brief_count }} brief recommendations.
+        {% if strategic.brief_count > 0 %}
+          <br>Log your trades to start comparing.
+          <br><button class="btn btn-primary btn-sm" onclick="switchTab('trades')" style="margin-top:8px">Log a Trade &rarr;</button>
+        {% else %}
+          <br>Run the morning brief generator to get started.
+        {% endif %}
+      </td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</section>

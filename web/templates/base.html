@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}{{ ticker_name }} Dashboard{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=3">
+<script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <div class="header-left">
+    <h1><span class="ticker">{{ ticker_name }}</span> Dashboard</h1>
+    <div class="subtitle">
+      {{ ticker }} &middot; Portfolio &middot; Trades &middot; Alerts &middot; Briefs &middot; {{ now }}
+    </div>
+  </div>
+  {% if monitor_status and monitor_status.running %}
+    <span class="status-badge online"><span class="status-dot"></span>Monitoring</span>
+  {% else %}
+    <span class="status-badge offline"><span class="status-dot"></span>Monitor Off</span>
+  {% endif %}
+</header>
+
+{% if flash_message %}
+<div class="flash flash-{{ flash_type|default('success') }}">{{ flash_message }}</div>
+{% endif %}
+
+{% block content %}{% endblock %}
+
+</div>
+</body>
+</html>

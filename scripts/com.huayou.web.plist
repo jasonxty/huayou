@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.huayou.web</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst/.venv/bin/uvicorn</string>
+        <string>web.app:app</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8600</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NUMBA_CACHE_DIR</key>
+        <string>/tmp/numba_cache</string>
+    </dict>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst/logs/web-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/tianyxu/playground/ai_center/personal/richman/huayou-analyst/logs/web-stderr.log</string>
+</dict>
+</plist>

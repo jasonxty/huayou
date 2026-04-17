@@ -17,7 +17,7 @@ import config
 from data.store import (
     get_connection, init_db, save_ohlcv, load_ohlcv,
     save_indicators, load_indicators, save_agent_run, save_brief,
-    load_position, save_position, record_t0_trade,
+    load_position,
 )
 from data.fetcher import fetch_incremental
 from data.indicators import compute_all
@@ -29,7 +29,6 @@ from data.fundamental import fetch_fundamentals
 from data.catalysts import fetch_catalysts
 from data.news import fetch_news
 from data.taoguba import fetch_expert_posts
-from brief_html import save_html_brief
 from backtest.engine import run_all_strategies
 from backtest.t0_backtest import run_t0_backtest, format_t0_backtest
 
@@ -217,7 +216,7 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
     return brief
 
 
-def step_analyze(conn, backtest_results: list, *, open_html: bool = False) -> None:
+def step_analyze(conn, backtest_results: list) -> None:
     """Run analysis pipeline and print morning brief."""
     brief = _run_analysis(conn, backtest_results)
     if brief is None:
@@ -230,24 +229,14 @@ def step_analyze(conn, backtest_results: list, *, open_html: bool = False) -> No
         for v in brief["grounding_violations"]:
             print(f"  - {v}")
 
-    if open_html:
-        import subprocess
-        html_path = save_html_brief(brief)
-        logger.info("HTML brief saved: %s", html_path)
-        subprocess.run(["open", str(html_path)], check=False)
-
 
 def main():
     parser = argparse.ArgumentParser(description="华友钴业 AI Analyst")
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch data")
     parser.add_argument("--backtest", action="store_true", help="Run backtests only")
     parser.add_argument("--no-fetch", action="store_true", help="Skip data fetch")
-    parser.add_argument("--set-position", nargs=2, metavar=("QUANTITY", "COST"),
-                        help="Record position, e.g. --set-position 1000 65.3")
     parser.add_argument("--backtest-t0", action="store_true",
                         help="Run T+0 strategy backtest on historical data")
-    parser.add_argument("--t0-done", nargs=3, metavar=("SELL_PRICE", "BUY_PRICE", "QTY"),
-                        help="Record a completed T+0 trade, e.g. --t0-done 62.5 60.0 200")
     parser.add_argument("--monitor", action="store_true",
                         help="Start real-time T+0 price monitor with WeChat push")
     parser.add_argument("--test-push", action="store_true",
@@ -260,8 +249,6 @@ def main():
                         help="Run full portfolio simulation (e.g. --simulate 100000)")
     parser.add_argument("--experts", action="store_true",
                         help="Show TaoGuBa expert opinions standalone")
-    parser.add_argument("--html", action="store_true",
-                        help="Generate HTML brief and open in browser")
     args = parser.parse_args()
 
     if args.experts:
@@ -362,25 +349,6 @@ def main():
     conn = get_connection()
     init_db(conn)
 
-    if args.t0_done:
-        sell_p, buy_p, qty = float(args.t0_done[0]), float(args.t0_done[1]), int(args.t0_done[2])
-        result = record_t0_trade(conn, sell_p, buy_p, qty)
-        print(f"✓ T+0交易已记录:")
-        print(f"  卖出 {qty}股 @ ¥{sell_p:.2f} → 买回 @ ¥{buy_p:.2f}")
-        print(f"  毛利: ¥{result['profit'] + result['fee']:.2f}  手续费: ¥{result['fee']:.2f}  净利: ¥{result['profit']:.2f}")
-        print(f"  持仓成本: ¥{result['cost_before']:.4f} → ¥{result['cost_after']:.4f}")
-        conn.close()
-        return
-
-    if args.set_position:
-        qty, cost = int(args.set_position[0]), float(args.set_position[1])
-        save_position(conn, config.TICKER, cost, qty)
-        logger.info("Position saved: %d shares @ ¥%.2f", qty, cost)
-        pos = load_position(conn)
-        print(f"✓ 持仓已记录: {config.TICKER} {config.TICKER_NAME} — {pos['quantity']}股 @ ¥{pos['cost']:.2f}")
-        conn.close()
-        return
-
     if args.backtest_t0:
         if not args.no_fetch:
             step_fetch(conn)
@@ -418,7 +386,7 @@ def main():
         step_indicators(conn)
 
     bt_results = step_backtest(conn)
-    step_analyze(conn, bt_results, open_html=args.html)
+    step_analyze(conn, bt_results)
 
     conn.close()
 

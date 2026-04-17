@@ -24,7 +24,7 @@ from pathlib import Path
 import requests
 
 import config
-from data.store import get_connection, init_db, load_ohlcv, load_indicators, load_position
+from data.store import get_connection, init_db, load_ohlcv, load_indicators, load_position, save_alert
 from data.holidays import is_trading_day
 from data.indicators import compute_all
 from agents.technical import analyze as analyze_technical
@@ -51,11 +51,20 @@ class Quote:
     timestamp: datetime
 
 
+_EASTMONEY_URLS = [
+    "https://push2.eastmoney.com/api/qt/stock/get",
+    "https://push2delay.eastmoney.com/api/qt/stock/get",
+]
+
+
 def fetch_realtime_quote(stock_code: str = config.TICKER) -> Quote | None:
-    """Fetch real-time quote from Eastmoney push API."""
+    """Fetch real-time quote from Eastmoney push API.
+
+    Tries the live endpoint first; falls back to the delay endpoint
+    (Eastmoney redirects to push2delay after market close).
+    """
     market = "1" if stock_code.startswith("6") else "0"
     secid = f"{market}.{stock_code}"
-    url = "https://push2.eastmoney.com/api/qt/stock/get"
     params = {
         "secid": secid,
         "fields": "f43,f44,f45,f46,f47,f48,f57,f58,f169,f170",
@@ -66,31 +75,39 @@ def fetch_realtime_quote(stock_code: str = config.TICKER) -> Quote | None:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Referer": "https://quote.eastmoney.com/",
     }
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("rc") != 0 or "data" not in data:
-            return None
-        d = data["data"]
 
-        def p(val):
-            if val is None or val == "-":
-                return 0.0
-            return float(val) / 100
+    for url in _EASTMONEY_URLS:
+        try:
+            resp = requests.get(url, params=params, headers=headers,
+                                timeout=10, allow_redirects=False)
+            if resp.status_code == 302:
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("rc") != 0 or "data" not in data:
+                continue
+            d = data["data"]
 
-        return Quote(
-            price=p(d.get("f43")),
-            open_price=p(d.get("f46")),
-            high=p(d.get("f44")),
-            low=p(d.get("f45")),
-            change_pct=p(d.get("f170")),
-            volume=int(d.get("f47", 0) or 0),
-            timestamp=datetime.now(),
-        )
-    except Exception as e:
-        logger.error("Quote fetch failed: %s", e)
-        return None
+            def p(val):
+                if val is None or val == "-":
+                    return 0.0
+                return float(val) / 100
+
+            return Quote(
+                price=p(d.get("f43")),
+                open_price=p(d.get("f46")),
+                high=p(d.get("f44")),
+                low=p(d.get("f45")),
+                change_pct=p(d.get("f170")),
+                volume=int(d.get("f47", 0) or 0),
+                timestamp=datetime.now(),
+            )
+        except Exception as e:
+            logger.debug("Quote from %s failed: %s", url, e)
+            continue
+
+    logger.error("Quote fetch failed from all endpoints")
+    return None
 
 
 def is_trading_time() -> bool:
@@ -326,17 +343,36 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker,
             False,
         ))
 
+    # Alert type → action/quantity/target metadata for DB
+    _alert_meta = {
+        ALERT_SELL1: ("卖出(第1批)", advice.sell_lot1, advice.sell_zone_low,
+                      advice.sell_zone_low, advice.sell_zone_high),
+        ALERT_SELL2: ("卖出(第2批)", advice.sell_lot2, advice.sell_zone_high,
+                      advice.sell_zone_low, advice.sell_zone_high),
+        ALERT_BUY: ("买入(低吸)", advice.t0_lot, advice.buy_zone_high,
+                    advice.buy_zone_low, advice.buy_zone_high),
+        ALERT_STOP: ("止损", advice.quantity, advice.stop_loss,
+                     advice.stop_loss, advice.stop_loss),
+        ALERT_BREAKOUT: ("突破", 0, advice.breakout_price,
+                         advice.breakout_price, advice.breakout_price),
+    }
+
     for alert_id, title, body, popup_body, is_critical in alerts:
+        popup_ok = False
+        wechat_ok = False
+
         # macOS弹窗（阻塞式，必须点击才消失）
         if enable_popup:
             icon = "stop" if is_critical else "note"
             alert_dialog_macos(title, popup_body, icon=icon)
+            popup_ok = True
 
         # WeChat push (quota limited)
         if tracker.can_push():
             result = send_wechat(title, body)
             if result.success:
                 tracker.record(alert_id)
+                wechat_ok = True
                 logger.info("✓ Pushed: %s (remaining: %d)", title, tracker.remaining())
             else:
                 logger.error("✗ Push failed: %s — %s", title, result.message)
@@ -344,6 +380,24 @@ def check_alerts(quote: Quote, advice: T0Advice, tracker: AlertTracker,
             tracker.record(alert_id)
             logger.warning("WeChat quota used up (%d), popup-only: %s",
                            config.MONITOR_DAILY_PUSH_LIMIT, title)
+
+        # Persist to DB
+        try:
+            meta = _alert_meta.get(alert_id, ("未知", 0, 0, 0, 0))
+            conn = get_connection()
+            init_db(conn)
+            save_alert(
+                conn, alert_type=alert_id, price=price,
+                change_pct=quote.change_pct,
+                action=meta[0], quantity=meta[1],
+                target_price=meta[2], zone_low=meta[3], zone_high=meta[4],
+                cost=advice.cost, pnl_pct=advice.pnl_pct,
+                strategy=advice.strategy,
+                popup_sent=popup_ok, wechat_sent=wechat_ok,
+            )
+            conn.close()
+        except Exception as e:
+            logger.warning("Failed to save alert to DB: %s", e)
 
 
 def print_status(quote: Quote, advice: T0Advice, tracker: AlertTracker) -> None:

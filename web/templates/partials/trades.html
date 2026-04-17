@@ -1,0 +1,35 @@
+<section>
+  <h2>Trade Log <span>Buy / Sell</span></h2>
+  <div style="overflow-x:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Side</th><th>Price</th><th>Qty</th>
+      <th>Amount</th><th>Fees</th><th>Notes</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% if trades %}
+      {% for t in trades %}
+      <tr>
+        <td class="date">{{ t.trade_date }}</td>
+        <td><span class="badge {{ 'badge-buy' if t.direction == 'BUY' else 'badge-sell' }}">{{ 'Buy' if t.direction == 'BUY' else 'Sell' }}</span></td>
+        <td class="price">&#165;{{ "%.2f"|format(t.price) }}</td>
+        <td>{{ t.quantity }}</td>
+        <td class="mono">&#165;{{ "{:,.0f}".format(t.amount) }}</td>
+        <td class="mono">&#165;{{ "%.0f"|format(t.fee) }}</td>
+        <td>{{ t.notes or '' }}</td>
+        <td>
+          <button class="btn btn-danger btn-sm"
+                  hx-delete="/trades/{{ t.id }}"
+                  hx-target="#trade-table"
+                  hx-swap="innerHTML"
+                  hx-confirm="Delete this trade record?">&#x2715;</button>
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="8" class="empty">No trade records yet</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</section>

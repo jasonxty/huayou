@@ -28,6 +28,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or config.DB_PATH
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
@@ -112,6 +113,49 @@ def init_db(conn: sqlite3.Connection) -> None:
             fetched_at TEXT DEFAULT (datetime('now')),
             UNIQUE(expert_id, url)
         );
+
+        CREATE TABLE IF NOT EXISTS trade_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trade_date TEXT,
+            ticker TEXT,
+            direction TEXT,
+            price REAL,
+            quantity INTEGER,
+            amount REAL,
+            fee REAL DEFAULT 0,
+            notes TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_date TEXT,
+            alert_time TEXT,
+            alert_type TEXT,
+            price REAL,
+            change_pct REAL,
+            action TEXT,
+            quantity INTEGER,
+            target_price REAL,
+            zone_low REAL,
+            zone_high REAL,
+            cost REAL,
+            pnl_pct REAL,
+            strategy TEXT,
+            popup_sent INTEGER DEFAULT 0,
+            wechat_sent INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS decision_notes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_date TEXT,
+            note_type TEXT,
+            ref_id TEXT,
+            note_text TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(note_date, note_type, ref_id)
+        );
     """)
     conn.commit()
 
@@ -153,13 +197,14 @@ def record_t0_trade(conn: sqlite3.Connection, sell_price: float, buy_price: floa
 
     Returns dict with trade details and updated position.
     """
-    FEE_RATE = 0.001  # ~0.1% round-trip (commission + stamp tax)
     position = load_position(conn, ticker)
     if position is None:
         raise ValueError(f"No position found for {ticker}")
 
     gross = (sell_price - buy_price) * quantity
-    fee = abs(sell_price * quantity + buy_price * quantity) * FEE_RATE
+    sell_fee = config.calc_trade_fee(sell_price * quantity, "SELL")
+    buy_fee = config.calc_trade_fee(buy_price * quantity, "BUY")
+    fee = sell_fee + buy_fee
     profit = gross - fee
     cost_before = position["cost"]
     total_shares = position["quantity"]
@@ -180,6 +225,141 @@ def record_t0_trade(conn: sqlite3.Connection, sell_price: float, buy_price: floa
         "fee": round(fee, 2), "cost_before": cost_before,
         "cost_after": cost_after,
     }
+
+
+def save_trade(conn: sqlite3.Connection, trade_date: str, direction: str,
+               price: float, quantity: int, notes: str = "",
+               ticker: str = config.TICKER) -> None:
+    """Record a buy/sell trade in the trade log."""
+    amount = price * quantity
+    fee = config.calc_trade_fee(amount, direction)
+    conn.execute(
+        """INSERT INTO trade_log
+           (trade_date, ticker, direction, price, quantity, amount, fee, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (trade_date, ticker, direction, price, quantity,
+         round(amount, 2), fee, notes),
+    )
+    conn.commit()
+
+
+def load_trade_log(conn: sqlite3.Connection,
+                   ticker: str = config.TICKER) -> list[dict]:
+    """Load all trades for a ticker, newest first."""
+    rows = conn.execute(
+        """SELECT trade_date, direction, price, quantity, amount, fee, notes
+           FROM trade_log WHERE ticker = ? ORDER BY trade_date DESC, id DESC""",
+        (ticker,),
+    ).fetchall()
+    cols = ["trade_date", "direction", "price", "quantity", "amount", "fee", "notes"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def delete_trade(conn: sqlite3.Connection, trade_id: int) -> bool:
+    """Delete a trade by ID. Returns True if a row was deleted."""
+    cur = conn.execute("DELETE FROM trade_log WHERE id = ?", (trade_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def load_trade_log_with_ids(conn: sqlite3.Connection,
+                            ticker: str = config.TICKER) -> list[dict]:
+    """Load all trades with row IDs (for delete support)."""
+    rows = conn.execute(
+        """SELECT id, trade_date, direction, price, quantity, amount, fee, notes
+           FROM trade_log WHERE ticker = ? ORDER BY trade_date DESC, id DESC""",
+        (ticker,),
+    ).fetchall()
+    cols = ["id", "trade_date", "direction", "price", "quantity", "amount", "fee", "notes"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def load_t0_trades(conn: sqlite3.Connection,
+                   ticker: str = config.TICKER) -> list[dict]:
+    """Load T+0 trade history, newest first."""
+    rows = conn.execute(
+        """SELECT trade_date, sell_price, buy_price, quantity,
+                  profit, cost_before, cost_after
+           FROM t0_trades WHERE ticker = ? ORDER BY trade_date DESC, id DESC""",
+        (ticker,),
+    ).fetchall()
+    cols = ["trade_date", "sell_price", "buy_price", "quantity",
+            "profit", "cost_before", "cost_after"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def save_alert(conn: sqlite3.Connection, alert_type: str, price: float,
+               change_pct: float, action: str, quantity: int,
+               target_price: float, zone_low: float, zone_high: float,
+               cost: float, pnl_pct: float, strategy: str,
+               popup_sent: bool = False, wechat_sent: bool = False) -> None:
+    """Persist a fired trading alert for history review."""
+    from datetime import datetime
+    now = datetime.now()
+    conn.execute(
+        """INSERT INTO alerts
+           (alert_date, alert_time, alert_type, price, change_pct,
+            action, quantity, target_price, zone_low, zone_high,
+            cost, pnl_pct, strategy, popup_sent, wechat_sent)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"),
+         alert_type, price, change_pct,
+         action, quantity, target_price, zone_low, zone_high,
+         cost, pnl_pct, strategy,
+         1 if popup_sent else 0, 1 if wechat_sent else 0),
+    )
+    conn.commit()
+
+
+def load_alerts(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
+    """Load recent alerts for display."""
+    rows = conn.execute(
+        """SELECT alert_date, alert_time, alert_type, price, change_pct,
+                  action, quantity, target_price, zone_low, zone_high,
+                  cost, pnl_pct, strategy, popup_sent, wechat_sent
+           FROM alerts ORDER BY created_at DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    cols = ["alert_date", "alert_time", "alert_type", "price", "change_pct",
+            "action", "quantity", "target_price", "zone_low", "zone_high",
+            "cost", "pnl_pct", "strategy", "popup_sent", "wechat_sent"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def save_decision_note(conn: sqlite3.Connection, note_date: str,
+                       note_type: str, ref_id: str, note_text: str) -> None:
+    """Upsert a reflection note for a decision comparison row."""
+    conn.execute(
+        """INSERT INTO decision_notes (note_date, note_type, ref_id, note_text)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(note_date, note_type, ref_id)
+           DO UPDATE SET note_text = excluded.note_text""",
+        (note_date, note_type, ref_id, note_text),
+    )
+    conn.commit()
+
+
+def load_decision_notes(conn: sqlite3.Connection) -> dict[str, str]:
+    """Load all decision notes as {date|type|ref_id: note_text} lookup."""
+    rows = conn.execute(
+        "SELECT note_date, note_type, ref_id, note_text FROM decision_notes"
+    ).fetchall()
+    return {f"{r[0]}|{r[1]}|{r[2]}": r[3] for r in rows}
+
+
+def load_alerts_with_ids(conn: sqlite3.Connection, limit: int = 200) -> list[dict]:
+    """Load recent alerts with row IDs for matching."""
+    rows = conn.execute(
+        """SELECT id, alert_date, alert_time, alert_type, price, change_pct,
+                  action, quantity, target_price, zone_low, zone_high,
+                  cost, pnl_pct, strategy, popup_sent, wechat_sent
+           FROM alerts ORDER BY created_at DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    cols = ["id", "alert_date", "alert_time", "alert_type", "price", "change_pct",
+            "action", "quantity", "target_price", "zone_low", "zone_high",
+            "cost", "pnl_pct", "strategy", "popup_sent", "wechat_sent"]
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def save_ohlcv(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
