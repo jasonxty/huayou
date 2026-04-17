@@ -4,7 +4,7 @@ from pathlib import Path
 import yaml
 
 TICKER = "603799"
-TICKER_NAME = "华友钴业"
+TICKER_NAME = "Huayou Cobalt"
 DB_PATH = Path(__file__).parent / "huayou.db"
 
 FETCH_RETRY_ATTEMPTS = 3
