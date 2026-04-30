@@ -27,7 +27,7 @@ def _make_advice(**overrides) -> T0Advice:
         stop_loss=56.0,
         sell_lot1=100, sell_lot2=100,
         breakout_price=65.0, rebuy_abort_price=64.0,
-        strategy="先卖后买", risk_note="", signals=[], escape_plan=[],
+        strategy="Sell First, Buy Back", risk_note="", signals=[], escape_plan=[],
     )
     defaults.update(overrides)
     return T0Advice(**defaults)
