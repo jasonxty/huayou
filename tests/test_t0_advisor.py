@@ -34,7 +34,7 @@ def test_no_position():
     advice = advise(**_base_args(position=None))
     assert advice.has_position is False
     assert advice.t0_enabled is False
-    assert "无持仓" in advice.strategy
+    assert "No Position" in advice.strategy
 
 
 def test_small_position():
@@ -44,17 +44,17 @@ def test_small_position():
     ))
     assert advice.has_position is True
     assert advice.t0_enabled is False
-    assert "不建议" in advice.strategy
+    assert "Not Advised" in advice.strategy
 
 
 def test_bearish_regime_sell_first():
     advice = advise(**_base_args(regime={"trend": "down", "rsi": "neutral"}))
-    assert "先卖后买" in advice.strategy
+    assert "Sell First" in advice.strategy
 
 
 def test_oversold_regime_buy_first():
     advice = advise(**_base_args(regime={"trend": "down", "rsi": "oversold"}))
-    assert "先买后卖" in advice.strategy
+    assert "Buy First" in advice.strategy
 
 
 def test_bullish_regime_larger_lot():
@@ -97,7 +97,7 @@ def test_deep_loss_conservative():
         latest_price=59.9,
     ))
     assert advice.pnl_pct < -20
-    assert any("深度套牢" in s or "谨慎" in s or "浮亏" in s for s in advice.signals)
+    assert any("loss" in s.lower() or "cautious" in s.lower() for s in advice.signals)
 
 
 def test_lot_never_exceeds_position():

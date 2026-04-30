@@ -1,0 +1,74 @@
+<section class="card bt-report">
+  <div class="bt-report-head">
+    <h3 class="section-title">Backtest Summary</h3>
+    <p class="muted small">
+      Sample period {{ bt.start_date }} &ndash; {{ bt.end_date }} &middot; {{ bt.trading_days }} trading days
+      {% if days_used %}(requested {{ days_used }} days{% if walk_forward %} &middot; walk-forward{% endif %}){% endif %}
+    </p>
+  </div>
+
+  <div class="bt-metrics">
+    <div class="bt-metric">
+      <span class="bt-metric-label">Label Win Rate</span>
+      <span class="bt-metric-value">{% if bt.label_win_rate is not none %}{{ bt.label_win_rate }}%{% else %}N/A{% endif %}</span>
+      <span class="bt-metric-hint">{{ bt.label_count }} days evaluated</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Strategy Return</span>
+      <span class="bt-metric-value {% if bt.strategy_return_pct >= 0 %}pos{% else %}neg{% endif %}">{{ "%+.2f"|format(bt.strategy_return_pct) }}%</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Buy &amp; Hold</span>
+      <span class="bt-metric-value">{{ "%+.2f"|format(bt.buy_hold_return_pct) }}%</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Max Drawdown</span>
+      <span class="bt-metric-value">{{ "%.2f"|format(bt.max_drawdown_pct) }}%</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Sharpe (approx)</span>
+      <span class="bt-metric-value">{{ "%.2f"|format(bt.sharpe_approx) }}</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Final Equity</span>
+      <span class="bt-metric-value">&yen;{{ "%.2f"|format(bt.final_equity) }}</span>
+    </div>
+  </div>
+
+  {% if bt.notes %}
+  <ul class="bt-notes">
+    {% for n in bt.notes %}
+    <li>{{ n }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+
+  <h4 class="bt-subhead">Last 30 Trading Day Signals</h4>
+  <div class="table-wrap">
+    <table class="bt-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Action</th>
+          <th>Confidence</th>
+          <th>Tech Score</th>
+          <th>Label</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in bt.records[-30:] %}
+        <tr>
+          <td>{{ r.date }}</td>
+          <td>{% if (r.action | length) > 40 %}{{ r.action[:40] }}&hellip;{% else %}{{ r.action }}{% endif %}</td>
+          <td>{{ (r.confidence * 100)|round(0)|int }}%</td>
+          <td>{{ "%+.0f"|format(r.tech_score) }}</td>
+          <td>{{ r.outcome_label or "&mdash;" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <h4 class="bt-subhead">Full Text Report</h4>
+  <pre class="report-pre" role="region" aria-label="Buffett backtest report">{{ report_text }}</pre>
+</section>

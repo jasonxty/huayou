@@ -3,7 +3,7 @@
 Uses daily OHLCV to simulate the T+0 advisor's recommendations historically.
 
 Key assumption: we only have daily bars, not tick-level data.
-For "先卖后买" (sell first, buy back later):
+For "Sell First, Buy Back":
   - Sell triggered if day's high >= sell_zone
   - Buy-back triggered if day's low <= buy_zone
   - Intraday sequence heuristic: if open > midpoint(high,low) → likely
@@ -42,14 +42,14 @@ ROUND_TRIP_COST = 0.0006  # 0.06% (stamp duty 0.05% sell-side + 0.01% commission
 @dataclass
 class T0Trade:
     date: str
-    strategy: str  # "先卖后买" / "先买后卖"
+    strategy: str  # "Sell First, Buy Back" / "Buy First, Sell Later"
     sell_price: float
     buy_price: float
     lot: int
     profit: float  # absolute RMB profit
     profit_pct: float  # % return on trade capital
     triggered: bool  # both legs executed
-    sell_only: bool  # sold but didn't buy back (卖飞)
+    sell_only: bool  # sold but didn't buy back (missed buyback)
     skip_reason: str = ""  # why T+0 was skipped
 
 
@@ -122,12 +122,12 @@ def _intraday_sequence_favorable(open_p: float, high: float, low: float,
     """Heuristic: did the intraday price action favor the T+0 strategy?
 
     If open is above the day's midpoint → likely peaked early then dipped
-    → favorable for "先卖后买" (sell first).
+    → favorable for "Sell First, Buy Back".
     If open is below midpoint → likely dipped early then rallied
-    → favorable for "先买后卖" (buy first).
+    → favorable for "Buy First, Sell Later".
     """
     mid = (high + low) / 2
-    if strategy == "先卖后买":
+    if strategy == "Sell First, Buy Back":
         return open_p >= mid
     else:
         return open_p <= mid
@@ -209,11 +209,11 @@ def run_t0_backtest(
         day_open = float(today["open"])
         lot = advice.t0_lot
 
-        if advice.strategy == "先卖后买":
+        if advice.strategy == "Sell First, Buy Back":
             sell_hit = day_high >= advice.sell_zone_low
             buy_hit = day_low <= advice.buy_zone_high
             favorable = _intraday_sequence_favorable(
-                day_open, day_high, day_low, "先卖后买")
+                day_open, day_high, day_low, "Sell First, Buy Back")
 
             if sell_hit and buy_hit and favorable:
                 sell_p = advice.sell_zone_low
@@ -222,7 +222,7 @@ def run_t0_backtest(
                 cost = (sell_p + buy_p) * lot * ROUND_TRIP_COST
                 net = gross - cost
                 trades.append(T0Trade(
-                    date=today_date, strategy="先卖后买",
+                    date=today_date, strategy="Sell First, Buy Back",
                     sell_price=sell_p, buy_price=buy_p, lot=lot,
                     profit=round(net, 2),
                     profit_pct=round(net / (sell_p * lot) * 100, 3),
@@ -230,7 +230,7 @@ def run_t0_backtest(
                 ))
             elif sell_hit and not buy_hit:
                 trades.append(T0Trade(
-                    date=today_date, strategy="先卖后买",
+                    date=today_date, strategy="Sell First, Buy Back",
                     sell_price=advice.sell_zone_low, buy_price=0, lot=lot,
                     profit=0, profit_pct=0,
                     triggered=False, sell_only=True,
@@ -238,18 +238,18 @@ def run_t0_backtest(
                 ))
             else:
                 trades.append(T0Trade(
-                    date=today_date, strategy="先卖后买",
+                    date=today_date, strategy="Sell First, Buy Back",
                     sell_price=0, buy_price=0, lot=lot,
                     profit=0, profit_pct=0,
                     triggered=False, sell_only=False,
                     skip_reason="zones_not_reached",
                 ))
 
-        else:  # 先买后卖
+        else:  # Buy First, Sell Later
             buy_hit = day_low <= advice.buy_zone_high
             sell_hit = day_high >= advice.sell_zone_low
             favorable = _intraday_sequence_favorable(
-                day_open, day_high, day_low, "先买后卖")
+                day_open, day_high, day_low, "Buy First, Sell Later")
 
             if buy_hit and sell_hit and favorable:
                 buy_p = advice.buy_zone_high
@@ -258,7 +258,7 @@ def run_t0_backtest(
                 cost = (sell_p + buy_p) * lot * ROUND_TRIP_COST
                 net = gross - cost
                 trades.append(T0Trade(
-                    date=today_date, strategy="先买后卖",
+                    date=today_date, strategy="Buy First, Sell Later",
                     sell_price=sell_p, buy_price=buy_p, lot=lot,
                     profit=round(net, 2),
                     profit_pct=round(net / (buy_p * lot) * 100, 3),
@@ -266,7 +266,7 @@ def run_t0_backtest(
                 ))
             elif buy_hit and not sell_hit:
                 trades.append(T0Trade(
-                    date=today_date, strategy="先买后卖",
+                    date=today_date, strategy="Buy First, Sell Later",
                     sell_price=0, buy_price=advice.buy_zone_high, lot=lot,
                     profit=0, profit_pct=0,
                     triggered=False, sell_only=False,
@@ -274,7 +274,7 @@ def run_t0_backtest(
                 ))
             else:
                 trades.append(T0Trade(
-                    date=today_date, strategy="先买后卖",
+                    date=today_date, strategy="Buy First, Sell Later",
                     sell_price=0, buy_price=0, lot=lot,
                     profit=0, profit_pct=0,
                     triggered=False, sell_only=False,
@@ -343,22 +343,22 @@ def format_t0_backtest(result: T0BacktestResult) -> str:
     """Format T+0 backtest result as a printable report."""
     lines = [
         f"\n{'─' * 60}",
-        f"  T+0 策略回测 — {result.test_start} ~ {result.test_end}",
+        f"  T+0 Strategy Backtest — {result.test_start} ~ {result.test_end}",
         f"{'─' * 60}",
-        f"  总交易日: {result.total_days}",
-        f"  完成做T: {result.completed_trades}次  |  卖飞: {result.sell_only_trades}次  |  未触发: {result.skipped_days}次",
-        f"  胜率: {result.win_rate * 100:.1f}%",
-        f"  累计收益: ¥{result.total_profit:,.2f}  (每股降本: ¥{result.cost_basis_reduction:.2f})",
-        f"  单笔均盈: ¥{result.avg_profit_per_trade:.2f}",
-        f"  单笔最大盈利: ¥{result.max_single_win:.2f}  |  最大亏损: ¥{result.max_single_loss:.2f}",
+        f"  Total Days: {result.total_days}",
+        f"  Completed: {result.completed_trades}  |  Sold Only: {result.sell_only_trades}  |  Skipped: {result.skipped_days}",
+        f"  Win Rate: {result.win_rate * 100:.1f}%",
+        f"  Cumulative P&L: ¥{result.total_profit:,.2f}  (Cost reduction/share: ¥{result.cost_basis_reduction:.2f})",
+        f"  Avg Profit/Trade: ¥{result.avg_profit_per_trade:.2f}",
+        f"  Best Trade: ¥{result.max_single_win:.2f}  |  Worst Trade: ¥{result.max_single_loss:.2f}",
     ]
 
     if result.total_days > 0:
         trigger_rate = (result.completed_trades + result.sell_only_trades) / result.total_days * 100
-        lines.append(f"  触发率: {trigger_rate:.0f}%  (有做T机会的天数占比)")
+        lines.append(f"  Trigger Rate: {trigger_rate:.0f}%  (days with T+0 opportunity)")
 
     if result.monthly_breakdown:
-        lines.append(f"\n  {'月份':<10} {'交易次数':>8} {'盈亏':>10} {'胜率':>8}")
+        lines.append(f"\n  {'Month':<10} {'Trades':>8} {'P&L':>10} {'Win Rate':>8}")
         lines.append(f"  {'─' * 40}")
         for m in result.monthly_breakdown[-6:]:
             lines.append(
@@ -366,15 +366,15 @@ def format_t0_backtest(result: T0BacktestResult) -> str:
                 f"¥{m['profit']:>8,.2f}  {m['win_rate'] * 100:>6.0f}%"
             )
 
-    verdict = "✓ 策略有效" if result.win_rate >= 0.55 and result.total_profit > 0 else "✗ 策略需优化"
-    lines.append(f"\n  结论: {verdict}")
+    verdict = "Strategy effective" if result.win_rate >= 0.55 and result.total_profit > 0 else "Strategy needs tuning"
+    lines.append(f"\n  Verdict: {verdict}")
 
     if result.win_rate < 0.5:
-        lines.append("  ⚠ 胜率低于50%，做T可能得不偿失")
+        lines.append("  Warning: Win rate below 50% — T+0 may not be profitable after fees")
     elif result.total_profit < 0:
-        lines.append("  ⚠ 累计亏损，手续费吃掉了利润")
+        lines.append("  Warning: Cumulative loss — fees are eating into profits")
     elif result.win_rate >= 0.6 and result.total_profit > 0:
-        lines.append("  ✓ 胜率>60%且累计盈利，策略表现良好")
+        lines.append("  Strong: Win rate >60% with positive cumulative P&L")
 
     lines.append(f"{'─' * 60}")
     return "\n".join(lines)

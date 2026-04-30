@@ -1,0 +1,129 @@
+<section class="card bt-report">
+  <div class="bt-report-head">
+    <h3 class="section-title">T+0 Backtest Summary</h3>
+    <p class="muted small">
+      {{ bt.test_start }} &ndash; {{ bt.test_end }} &middot; {{ bt.total_days }} total days
+      {% if days_used %}(requested {{ days_used }} days){% endif %}
+    </p>
+  </div>
+
+  <div class="bt-metrics">
+    <div class="bt-metric">
+      <span class="bt-metric-label">Completed Trades</span>
+      <span class="bt-metric-value">{{ bt.completed_trades }}</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Sold Only</span>
+      <span class="bt-metric-value">{{ bt.sell_only_trades }}</span>
+      <span class="bt-metric-hint">missed buyback</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Skipped</span>
+      <span class="bt-metric-value">{{ bt.skipped_days }}</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Win Rate</span>
+      <span class="bt-metric-value {% if bt.win_rate >= 0.55 %}pos{% elif bt.win_rate < 0.45 %}neg{% endif %}">
+        {{ "%.1f"|format(bt.win_rate * 100) }}%
+      </span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Cumulative P&amp;L</span>
+      <span class="bt-metric-value {% if bt.total_profit >= 0 %}pos{% else %}neg{% endif %}">
+        &yen;{{ "{:,.2f}".format(bt.total_profit) }}
+      </span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Avg Profit/Trade</span>
+      <span class="bt-metric-value {% if bt.avg_profit_per_trade >= 0 %}pos{% else %}neg{% endif %}">
+        &yen;{{ "%.2f"|format(bt.avg_profit_per_trade) }}
+      </span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Best Trade</span>
+      <span class="bt-metric-value pos">&yen;{{ "%.2f"|format(bt.max_single_win) }}</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Worst Trade</span>
+      <span class="bt-metric-value neg">&yen;{{ "%.2f"|format(bt.max_single_loss) }}</span>
+    </div>
+    <div class="bt-metric">
+      <span class="bt-metric-label">Cost Reduction/Share</span>
+      <span class="bt-metric-value">&yen;{{ "%.2f"|format(bt.cost_basis_reduction) }}</span>
+    </div>
+    {% if bt.total_days > 0 %}
+    <div class="bt-metric">
+      <span class="bt-metric-label">Trigger Rate</span>
+      <span class="bt-metric-value">{{ "%.0f"|format((bt.completed_trades + bt.sell_only_trades) / bt.total_days * 100) }}%</span>
+      <span class="bt-metric-hint">days with T+0 opportunity</span>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if bt.monthly_breakdown %}
+  <h4 class="bt-subhead">Monthly Breakdown (last 6)</h4>
+  <div class="table-wrap">
+    <table class="bt-table">
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th>Trades</th>
+          <th>P&amp;L</th>
+          <th>Win Rate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in bt.monthly_breakdown[-6:] %}
+        <tr>
+          <td>{{ m.month }}</td>
+          <td>{{ m.trades }}</td>
+          <td class="{% if m.profit >= 0 %}profit{% else %}loss{% endif %}">
+            &yen;{{ "{:,.2f}".format(m.profit) }}
+          </td>
+          <td class="{% if m.win_rate >= 0.55 %}profit{% elif m.win_rate < 0.45 %}loss{% endif %}">
+            {{ "%.0f"|format(m.win_rate * 100) }}%
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% set completed = bt.trades|selectattr("triggered")|list %}
+  {% set recent = completed[-30:] if completed|length > 30 else completed %}
+  {% if recent %}
+  <h4 class="bt-subhead">Last {{ recent|length }} Completed Trades</h4>
+  <div class="table-wrap">
+    <table class="bt-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Strategy</th>
+          <th>Sell</th>
+          <th>Buy</th>
+          <th>Lot</th>
+          <th>Profit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in recent %}
+        <tr>
+          <td>{{ t.date }}</td>
+          <td>{{ t.strategy }}</td>
+          <td>&yen;{{ "%.2f"|format(t.sell_price) }}</td>
+          <td>&yen;{{ "%.2f"|format(t.buy_price) }}</td>
+          <td>{{ t.lot }}</td>
+          <td class="{% if t.profit >= 0 %}profit{% else %}loss{% endif %}">
+            &yen;{{ "%.2f"|format(t.profit) }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <h4 class="bt-subhead">Full Text Report</h4>
+  <pre class="report-pre" role="region" aria-label="T+0 backtest report">{{ report_text }}</pre>
+</section>

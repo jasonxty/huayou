@@ -41,7 +41,7 @@ class T0Advice:
     breakout_price: float = 0.0
     rebuy_abort_price: float = 0.0  # if sold and price stays above this, skip rebuy today
 
-    strategy: str = ""  # "先卖后买" or "先买后卖" or "不建议做T"
+    strategy: str = ""  # "Sell First, Buy Back" / "Buy First, Sell Later" / "T+0 Not Advised"
     risk_note: str = ""
     signals: list[str] = None
     escape_plan: list[str] = None  # what to do if price keeps rising after sell
@@ -60,25 +60,25 @@ def _build_escape_plan(advice: T0Advice, bearish: bool, bullish: bool) -> None:
 
     if advice.sell_lot2 > 0:
         advice.escape_plan.append(
-            f"分批卖出: 先卖{advice.sell_lot1}股@¥{advice.sell_zone_low:.2f}，"
-            f"再卖{advice.sell_lot2}股@¥{advice.sell_zone_high:.2f}"
+            f"Split sell: {advice.sell_lot1} shares @¥{advice.sell_zone_low:.2f}, "
+            f"then {advice.sell_lot2} shares @¥{advice.sell_zone_high:.2f}"
         )
     advice.escape_plan.append(
-        f"若卖出后价格突破¥{advice.rebuy_abort_price:.2f}且不回落 → 今日不接回，"
-        f"明日观察（剩余{advice.quantity - advice.t0_lot}股继续享受上涨）"
+        f"If price breaks above ¥{advice.rebuy_abort_price:.2f} after selling → skip buyback today, "
+        f"observe tomorrow ({advice.quantity - advice.t0_lot} remaining shares still benefit from upside)"
     )
     advice.escape_plan.append(
-        f"若放量突破¥{advice.breakout_price:.2f} → 趋势可能反转，"
-        f"次日开盘补回仓位并上调做T区间"
+        f"If volume breakout above ¥{advice.breakout_price:.2f} → trend may reverse, "
+        f"buy back at next open and raise T+0 zones"
     )
 
     if bearish:
         advice.escape_plan.append(
-            "空头反弹卖飞概率低；即使卖飞，降低成本优先于追涨"
+            "Bearish bounce — low risk of missing rally; cost reduction takes priority over chasing"
         )
     elif bullish:
         advice.escape_plan.append(
-            "多头趋势中卖飞有成本，建议只卖计划仓位，不追空"
+            "Bullish trend — selling has opportunity cost; only sell planned lot, don't chase shorts"
         )
 
 
@@ -100,8 +100,8 @@ def advise(
         return T0Advice(
             has_position=False,
             current_price=latest_price,
-            strategy="无持仓",
-            signals=["当前无持仓，无法做T"],
+            strategy="No Position",
+            signals=["No position held — cannot do T+0"],
         )
 
     qty = position["quantity"]
@@ -117,14 +117,14 @@ def advise(
     )
 
     if qty < 200:
-        advice.strategy = "不建议做T"
-        advice.risk_note = "持仓不足200股（最小交易单位），做T空间有限"
-        advice.signals.append(f"持仓{qty}股，低于做T最低门槛200股")
+        advice.strategy = "T+0 Not Advised"
+        advice.risk_note = "Position below 200 shares (minimum lot), insufficient for T+0"
+        advice.signals.append(f"Holding {qty} shares, below 200-share T+0 minimum")
         return advice
 
     if atr <= 0:
-        advice.strategy = "不建议做T"
-        advice.risk_note = "ATR数据异常"
+        advice.strategy = "T+0 Not Advised"
+        advice.risk_note = "ATR data unavailable"
         return advice
 
     advice.t0_enabled = True
@@ -178,40 +178,40 @@ def advise(
     _build_escape_plan(advice, regime_bearish, regime_bullish)
 
     if regime_oversold:
-        advice.strategy = "先买后卖"
-        advice.signals.append("超卖区域 → 可先低吸，等反弹后卖出原有持仓")
+        advice.strategy = "Buy First, Sell Later"
+        advice.signals.append("Oversold zone — buy the dip first, sell existing shares on bounce")
     elif regime_bearish:
-        advice.strategy = "先卖后买"
-        advice.signals.append("空头趋势 → 优先高抛降低成本，待回落后接回")
+        advice.strategy = "Sell First, Buy Back"
+        advice.signals.append("Bearish trend — sell high to reduce cost, buy back on pullback")
     elif tech_score >= 20:
-        advice.strategy = "先买后卖"
-        advice.signals.append("技术面偏多 → 先低吸增仓，高位卖出原持仓摊薄成本")
+        advice.strategy = "Buy First, Sell Later"
+        advice.signals.append("Bullish technicals — buy low first, sell existing shares at high to reduce avg cost")
     elif tech_score <= -20:
-        advice.strategy = "先卖后买"
-        advice.signals.append("技术面偏空 → 先逢高减仓，待回调再接回")
+        advice.strategy = "Sell First, Buy Back"
+        advice.signals.append("Bearish technicals — sell at high, buy back on pullback")
     else:
-        advice.strategy = "先卖后买"
-        advice.signals.append("震荡市 → 默认先卖后买，降低风险")
+        advice.strategy = "Sell First, Buy Back"
+        advice.signals.append("Range-bound market — default sell first, buy back to reduce risk")
 
     spread = advice.sell_zone_low - advice.buy_zone_high
     if spread < atr * 0.15:
         advice.t0_enabled = False
-        advice.strategy = "不建议做T"
-        advice.risk_note = "买卖区间过窄，手续费可能吃掉利润"
-        advice.signals.append(f"高抛低吸价差仅{spread:.2f}元，不足ATR的15%")
+        advice.strategy = "T+0 Not Advised"
+        advice.risk_note = "Spread too narrow — fees may exceed profit"
+        advice.signals.append(f"Sell/buy spread only ¥{spread:.2f}, below 15% of ATR")
         return advice
 
     if pnl_pct < -20:
-        advice.risk_note = "深度套牢，做T以降本为主，严格止损"
-        advice.signals.append(f"浮亏{pnl_pct:.1f}%，建议小仓位谨慎做T")
+        advice.risk_note = "Deep loss — T+0 for cost reduction only, strict stop-loss"
+        advice.signals.append(f"Unrealized loss {pnl_pct:.1f}%, use small lots cautiously")
     elif pnl_pct < -10:
-        advice.risk_note = "中度套牢，做T摊薄成本"
-        advice.signals.append(f"浮亏{pnl_pct:.1f}%，逢高减仓+低吸降本")
+        advice.risk_note = "Moderate loss — T+0 to reduce avg cost"
+        advice.signals.append(f"Unrealized loss {pnl_pct:.1f}%, sell high + buy low to reduce cost")
     elif pnl_pct < 0:
-        advice.risk_note = "小幅浮亏，做T回本"
+        advice.risk_note = "Small loss — T+0 to break even"
     elif pnl_pct > 10:
-        advice.risk_note = "浮盈中，做T锁定部分利润"
+        advice.risk_note = "In profit — T+0 to lock partial gains"
     else:
-        advice.risk_note = "小幅浮盈，做T增厚收益"
+        advice.risk_note = "Small profit — T+0 to enhance returns"
 
     return advice

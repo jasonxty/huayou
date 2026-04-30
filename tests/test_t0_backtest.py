@@ -63,19 +63,19 @@ def test_format_output():
     ohlcv = _make_ohlcv(300)
     result = run_t0_backtest(ohlcv, position_qty=1000, position_cost=60.0)
     output = format_t0_backtest(result)
-    assert "T+0 策略回测" in output
-    assert "胜率" in output
-    assert "累计收益" in output
+    assert "T+0 Strategy Backtest" in output
+    assert "Win Rate" in output
+    assert "Cumulative P&L" in output
 
 
 def test_intraday_sequence_sell_first():
-    assert _intraday_sequence_favorable(62, 63, 59, "先卖后买") is True
-    assert _intraday_sequence_favorable(60, 63, 59, "先卖后买") is False
+    assert _intraday_sequence_favorable(62, 63, 59, "Sell First, Buy Back") is True
+    assert _intraday_sequence_favorable(60, 63, 59, "Sell First, Buy Back") is False
 
 
 def test_intraday_sequence_buy_first():
-    assert _intraday_sequence_favorable(60, 63, 59, "先买后卖") is True
-    assert _intraday_sequence_favorable(62, 63, 59, "先买后卖") is False
+    assert _intraday_sequence_favorable(60, 63, 59, "Buy First, Sell Later") is True
+    assert _intraday_sequence_favorable(62, 63, 59, "Buy First, Sell Later") is False
 
 
 def test_monthly_breakdown_present():

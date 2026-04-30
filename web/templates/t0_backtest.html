@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}T+0 Backtest · {{ ticker_name }}{% endblock %}
+
+{% block content %}
+
+<section class="card bt-intro">
+  <h2 class="section-title">T+0 Intraday Strategy Backtest</h2>
+  <p class="subtitle-text">
+    Simulates daily T+0 round-trips (sell high, buy back low) using historical OHLCV data.
+    Each day's zones are computed from the prior day's indicators.
+    Conservative: only counts trades where both legs trigger and the intraday sequence heuristic agrees.
+  </p>
+
+  <form class="bt-controls"
+        hx-get="/api/t0-backtest"
+        hx-target="#t0-backtest-root"
+        hx-swap="innerHTML"
+        hx-indicator="#t0-loading-global">
+    <label class="bt-field">
+      <span>Lookback (days)</span>
+      <input type="number" name="days" value="{{ default_days }}" min="60" max="750" step="1">
+    </label>
+    <label class="bt-field">
+      <span>Position (shares)</span>
+      <input type="number" name="position_qty" value="{{ default_qty }}" min="200" max="100000" step="100">
+    </label>
+    <label class="bt-field">
+      <span>Avg Cost (&yen;)</span>
+      <input type="number" name="position_cost" value="{{ default_cost }}" min="0.01" max="9999" step="0.01">
+    </label>
+    <button type="submit" class="btn btn-primary bt-submit">Run Backtest</button>
+  </form>
+</section>
+
+<span id="t0-loading-global" class="htmx-indicator bt-loading-banner">Computing T+0 backtest&hellip;</span>
+
+<div id="t0-backtest-root">
+  <p class="muted">Click <strong>Run Backtest</strong> to compute results.</p>
+</div>
+
+{% endblock %}

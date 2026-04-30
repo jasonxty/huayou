@@ -79,6 +79,33 @@ def client(setup_db):
             yield c
 
 
+class TestBuffettBacktestPage:
+    def test_buffett_backtest_shell(self, client):
+        resp = client.get("/buffett-backtest")
+        assert resp.status_code == 200
+        assert "Backtest" in resp.text
+
+    def test_api_buffett_backtest_short_data_error(self, client):
+        resp = client.get("/api/buffett-backtest")
+        assert resp.status_code == 200
+        body = resp.text
+        assert "Failed" in body or "empty" in body or "Insufficient" in body
+
+
+class TestT0BacktestPage:
+    def test_t0_backtest_page(self, client):
+        resp = client.get("/t0-backtest")
+        assert resp.status_code == 200
+        assert "T+0" in resp.text
+        assert "Backtest" in resp.text
+
+    def test_api_t0_backtest_no_data(self, client):
+        resp = client.get("/api/t0-backtest")
+        assert resp.status_code == 200
+        body = resp.text
+        assert "Failed" in body or "No OHLCV" in body or "T+0" in body
+
+
 class TestDashboardPage:
     def test_get_dashboard(self, client):
         resp = client.get("/")
@@ -258,14 +285,14 @@ class TestComparisonHero:
     def test_dashboard_has_comparison_hero(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "System P&amp;L" in resp.text
+        assert "Buffett" in resp.text
         assert "My Actual P&amp;L" in resp.text
         assert "Delta" in resp.text
 
     def test_api_comparison_hero(self, client):
         resp = client.get("/api/comparison-hero")
         assert resp.status_code == 200
-        assert "System P&amp;L" in resp.text
+        assert "Buffett" in resp.text
 
 
 class TestStrategicComparison:

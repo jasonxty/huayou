@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}{{ kobe_name }} Backtest · {{ ticker_name }}{% endblock %}
+
+{% block content %}
+
+<section class="card bt-intro">
+  <h2 class="section-title">{{ kobe_avatar }} {{ kobe_name }} Strategy Backtest</h2>
+  <p class="subtitle-text">
+    Historical performance of current weights and rules over the past N trading days
+    (same logic as CLI <code>analyze.py --buffett-backtest</code>).
+    No fundamental/news look-ahead; optional walk-forward sub-strategy (slower).
+  </p>
+
+  <form class="bt-controls"
+        hx-get="/api/buffett-backtest"
+        hx-target="#buffett-backtest-root"
+        hx-swap="innerHTML"
+        hx-indicator="#bt-loading-global">
+    <label class="bt-field">
+      <span>Trading Days</span>
+      <input type="number" name="days" value="{{ default_days }}" min="50" max="500" step="1">
+    </label>
+    <label class="bt-field bt-checkbox">
+      <input type="checkbox" name="walk_forward" value="true">
+      <span>Walk-forward sub-strategy (slow)</span>
+    </label>
+    <button type="submit" class="btn btn-primary bt-submit">Run Backtest</button>
+  </form>
+</section>
+
+<span id="bt-loading-global" class="htmx-indicator bt-loading-banner">Computing backtest&hellip;</span>
+
+<div id="buffett-backtest-root">
+  <p class="muted">Click <strong>Run Backtest</strong> to compute results.</p>
+</div>
+
+{% endblock %}

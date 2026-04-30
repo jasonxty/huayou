@@ -435,8 +435,8 @@ def run_monitor(once: bool = False, *, enable_popup: bool = True,
         logger.warning("T+0 not enabled today (strategy: %s). Monitoring skipped.", advice.strategy)
         if enable_popup:
             notify_macos(
-                f"📊 {config.TICKER_NAME} 监控",
-                f"今日策略: {advice.strategy}，不建议做T",
+                f"📊 {config.TICKER_NAME} Monitor",
+                f"Strategy: {advice.strategy} — T+0 disabled today",
             )
         return
 
@@ -445,31 +445,31 @@ def run_monitor(once: bool = False, *, enable_popup: bool = True,
 
     header = (
         f"\n{'═' * 60}\n"
-        f"  {config.TICKER_NAME} ({config.TICKER}) T+0 实时监控\n"
+        f"  {config.TICKER_NAME} ({config.TICKER}) T+0 Real-time Monitor\n"
         f"{'═' * 60}\n"
-        f"  策略: {advice.strategy}\n"
-        f"  做T仓位: {advice.t0_lot}股 (总持仓{advice.quantity}股)\n"
-        f"  高抛区间: ¥{advice.sell_zone_low:.2f} ~ ¥{advice.sell_zone_high:.2f}\n"
-        f"    第1批: {advice.sell_lot1}股 @ ¥{advice.sell_zone_low:.2f}\n"
+        f"  Strategy: {advice.strategy}\n"
+        f"  T+0 Lot: {advice.t0_lot} shares (total position {advice.quantity})\n"
+        f"  Sell Zone: ¥{advice.sell_zone_low:.2f} ~ ¥{advice.sell_zone_high:.2f}\n"
+        f"    Batch 1: {advice.sell_lot1} shares @ ¥{advice.sell_zone_low:.2f}\n"
     )
     if advice.sell_lot2 > 0:
-        header += f"    第2批: {advice.sell_lot2}股 @ ¥{advice.sell_zone_high:.2f}\n"
+        header += f"    Batch 2: {advice.sell_lot2} shares @ ¥{advice.sell_zone_high:.2f}\n"
     header += (
-        f"  低吸区间: ¥{advice.buy_zone_low:.2f} ~ ¥{advice.buy_zone_high:.2f}\n"
-        f"  止损价:   ¥{advice.stop_loss:.2f}\n"
-        f"  突破价:   ¥{advice.breakout_price:.2f}\n"
-        f"  轮询间隔: {poll_interval}秒 | 弹窗提醒: {'开' if enable_popup else '关'}\n"
-        f"  每日推送额度: {config.MONITOR_DAILY_PUSH_LIMIT}次\n"
+        f"  Buy Zone: ¥{advice.buy_zone_low:.2f} ~ ¥{advice.buy_zone_high:.2f}\n"
+        f"  Stop Loss: ¥{advice.stop_loss:.2f}\n"
+        f"  Breakout:  ¥{advice.breakout_price:.2f}\n"
+        f"  Poll Interval: {poll_interval}s | Popup: {'ON' if enable_popup else 'OFF'}\n"
+        f"  Daily Push Limit: {config.MONITOR_DAILY_PUSH_LIMIT}\n"
         f"{'═' * 60}\n"
     )
     print(header)
 
     if enable_popup:
         notify_macos(
-            f"📊 {config.TICKER_NAME} 监控已启动",
-            (f"策略: {advice.strategy}\n"
-             f"卖区: ¥{advice.sell_zone_low:.2f}~{advice.sell_zone_high:.2f}\n"
-             f"买区: ¥{advice.buy_zone_low:.2f}~{advice.buy_zone_high:.2f}"),
+            f"📊 {config.TICKER_NAME} Monitor Started",
+            (f"Strategy: {advice.strategy}\n"
+             f"Sell: ¥{advice.sell_zone_low:.2f}~{advice.sell_zone_high:.2f}\n"
+             f"Buy: ¥{advice.buy_zone_low:.2f}~{advice.buy_zone_high:.2f}"),
         )
 
     if once:
