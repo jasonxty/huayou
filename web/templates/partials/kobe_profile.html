@@ -1,0 +1,54 @@
+<div class="kobe-profile-card">
+  <div class="kobe-header">
+    <span class="kobe-avatar">{{ kobe_avatar }}</span>
+    <div class="kobe-title">
+      <h2>{{ kobe_name }}</h2>
+      <span class="kobe-subtitle">AI Value Investor &middot; Learning System</span>
+    </div>
+  </div>
+
+  <div class="kobe-stats-grid">
+    <div class="kobe-stat">
+      <span class="kobe-stat-value">{{ kobe_stats.total_briefs }}</span>
+      <span class="kobe-stat-label">Briefs</span>
+    </div>
+    <div class="kobe-stat">
+      <span class="kobe-stat-value {% if kobe_stats.win_rate >= 55 %}profit{% elif kobe_stats.win_rate < 45 %}loss{% endif %}">
+        {{ kobe_stats.win_rate }}%
+      </span>
+      <span class="kobe-stat-label">Win Rate</span>
+    </div>
+    <div class="kobe-stat">
+      <span class="kobe-stat-value">{{ kobe_stats.wins }}W / {{ kobe_stats.losses }}L</span>
+      <span class="kobe-stat-label">Record</span>
+    </div>
+    <div class="kobe-stat">
+      <span class="kobe-stat-value">{{ kobe_stats.learning_iterations }}</span>
+      <span class="kobe-stat-label">Learning Iterations</span>
+    </div>
+  </div>
+
+  {% if kobe_weights %}
+  <div class="kobe-weights">
+    <h4>Active Strategy Weights</h4>
+    <div class="kobe-weight-grid">
+      <div class="kobe-weight">
+        <span class="weight-label">Buy Threshold</span>
+        <span class="weight-value">{{ kobe_weights.tech_buy_threshold }}</span>
+      </div>
+      <div class="kobe-weight">
+        <span class="weight-label">Sell Threshold</span>
+        <span class="weight-value">{{ kobe_weights.tech_sell_threshold }}</span>
+      </div>
+      <div class="kobe-weight">
+        <span class="weight-label">Regime Trust</span>
+        <span class="weight-value">{{ "%.2f"|format(kobe_weights.regime_trust) }}</span>
+      </div>
+      <div class="kobe-weight">
+        <span class="weight-label">Expert Adj.</span>
+        <span class="weight-value">{{ "%.2f"|format(kobe_weights.expert_adjustment) }}</span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+</div>

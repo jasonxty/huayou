@@ -5,6 +5,59 @@ import yaml
 
 TICKER = "603799"
 TICKER_NAME = "Huayou Cobalt"
+
+# Buffett — the system's AI trading persona
+KOBE_NAME = "Buffett"
+KOBE_AVATAR = "\U0001F4B0"  # money bag emoji
+
+# Default strategy weights (Buffett learns to adjust these over time)
+KOBE_DEFAULT_WEIGHTS = {
+    "tech_buy_threshold": 40,
+    "tech_mild_buy_threshold": 20,
+    "tech_sell_threshold": -40,
+    "tech_mild_sell_threshold": -20,
+    "expert_adjustment": 0.08,
+    "regime_trust": 1.0,        # multiplier on regime-based confidence
+    "fundamental_trust": 1.0,   # multiplier on fundamental score influence
+    "regime_buy_adjust": {},   # "trend|rsi" -> int, 加到买阈上（变难买）
+    "regime_sell_adjust": {},  # "trend|rsi" -> int, 从卖阈减去（更易卖）
+}
+KOBE_WEIGHT_BOUNDS = {
+    "tech_buy_threshold": (25, 55),
+    "tech_mild_buy_threshold": (10, 35),
+    "tech_sell_threshold": (-55, -25),
+    "tech_mild_sell_threshold": (-35, -10),
+    "expert_adjustment": (0.02, 0.15),
+    "regime_trust": (0.5, 1.5),
+    "fundamental_trust": (0.5, 1.5),
+}
+KOBE_MIN_SAMPLES_FOR_LEARNING = 10  # min briefs before Buffett starts adjusting
+
+# Buffett 预测标签：混合收益 + 手续费（用于学习/日记/校准，一致定义）
+KOBE_LABEL_WEIGHT_1D = 0.45
+KOBE_LABEL_WEIGHT_5D = 0.55
+KOBE_LABEL_HOLD_FLAT = 0.018  # |混合收益| 低于此视为 HOLD「踏对节奏」
+KOBE_LABEL_HOLD_NEUTRAL_BELOW = 0.055  # 介于 flat 与此之间为 neutral；更大为错判
+KOBE_USE_FRICTION_IN_LABEL = True
+# 用于估算双边手续费占价比（万元级名义本金）
+KOBE_FRICTION_NOTIONAL_CNY = 100_000.0
+
+# 技术面 + 基本面 合成得分（送入阈值比较）
+KOBE_FUND_BLEND_RATIO = 0.35  # effective = tech + fundamental_trust * fund * ratio
+
+# 基本面极差时禁止激进 BUY（仍可比阈值得出轻仓等）
+KOBE_FUND_BLOCK_AGGRESSIVE_BELOW = -38.0
+
+# 学习：缩小步长防过拟合；行情分桶样本门槛
+KOBE_LEARNING_STEP_SCALE = 0.55
+KOBE_REGIME_MIN_SAMPLES = 5
+KOBE_REGIME_BUCKET_MIN_ACTIONS = 3
+KOBE_REGIME_ADJUST_STEP = 2
+KOBE_REGIME_ADJUST_CAP = 12
+
+# 校准：置信度映射到昨日 bucket 的 actual/predicted，比例夹紧
+KOBE_CALIBRATION_RATIO_CLAMP = (0.72, 1.28)
+
 DB_PATH = Path(__file__).parent / "huayou.db"
 
 FETCH_RETRY_ATTEMPTS = 3
@@ -75,6 +128,16 @@ def calc_trade_fee(amount: float, direction: str = "BUY") -> float:
     transfer = amount * fc["transfer_fee_rate"]
     stamp = amount * fc["stamp_tax_rate"] if direction == "SELL" else 0
     return round(commission + transfer + stamp, 2)
+
+
+def estimate_round_trip_friction_fraction(notional_cny: float | None = None) -> float:
+    """双边手续费约占名义本金的比例，用于标签里 BUY 是否跑赢成本。"""
+    n = float(notional_cny or KOBE_FRICTION_NOTIONAL_CNY)
+    if n <= 0:
+        return 0.002
+    buy_f = calc_trade_fee(n, "BUY")
+    sell_f = calc_trade_fee(n, "SELL")
+    return (buy_f + sell_f) / n
 
 
 def get_taoguba_config() -> dict:

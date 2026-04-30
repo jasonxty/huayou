@@ -1,5 +1,7 @@
 """SQLite storage for OHLCV data, indicators, agent runs, and briefs."""
 
+from __future__ import annotations
+
 import json
 import sqlite3
 from pathlib import Path
@@ -155,6 +157,42 @@ def init_db(conn: sqlite3.Connection) -> None:
             note_text TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             UNIQUE(note_date, note_type, ref_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS kobe_weights (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            weights_json TEXT,
+            reason TEXT,
+            sample_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS kobe_journal (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_date TEXT UNIQUE,
+            brief_action TEXT,
+            actual_return_1d REAL,
+            actual_return_5d REAL,
+            outcome TEXT,
+            reflection TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS kobe_calibration (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            computed_date TEXT,
+            bucket TEXT,
+            predicted_confidence REAL,
+            actual_win_rate REAL,
+            sample_count INTEGER,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS kobe_monthly (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month TEXT UNIQUE,
+            report_json TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
         );
     """)
     conn.commit()
@@ -456,3 +494,188 @@ def save_brief(conn: sqlite3.Connection, date: str, action: str,
          json.dumps(agent_summary, ensure_ascii=False, cls=_NumpyEncoder)),
     )
     conn.commit()
+
+
+# ── Buffett CRUD ───────────────────────────────────────────────────────
+
+def save_kobe_weights(conn: sqlite3.Connection, weights: dict,
+                      reason: str, sample_count: int = 0) -> None:
+    conn.execute(
+        "INSERT INTO kobe_weights (weights_json, reason, sample_count) VALUES (?, ?, ?)",
+        (json.dumps(weights), reason, sample_count),
+    )
+    conn.commit()
+
+
+def load_kobe_weights(conn: sqlite3.Connection) -> dict | None:
+    row = conn.execute(
+        "SELECT weights_json FROM kobe_weights ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def save_kobe_journal(conn: sqlite3.Connection, entry_date: str,
+                      brief_action: str, ret_1d: float | None,
+                      ret_5d: float | None, outcome: str,
+                      reflection: str) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO kobe_journal
+           (entry_date, brief_action, actual_return_1d, actual_return_5d,
+            outcome, reflection)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (entry_date, brief_action, ret_1d, ret_5d, outcome, reflection),
+    )
+    conn.commit()
+
+
+def load_kobe_journal(conn: sqlite3.Connection, limit: int = 60) -> list[dict]:
+    rows = conn.execute(
+        """SELECT entry_date, brief_action, actual_return_1d, actual_return_5d,
+                  outcome, reflection
+           FROM kobe_journal ORDER BY entry_date DESC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    cols = ["entry_date", "brief_action", "actual_return_1d",
+            "actual_return_5d", "outcome", "reflection"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def save_kobe_calibration(conn: sqlite3.Connection, computed_date: str,
+                          buckets: list[dict]) -> None:
+    for b in buckets:
+        conn.execute(
+            """INSERT INTO kobe_calibration
+               (computed_date, bucket, predicted_confidence, actual_win_rate, sample_count)
+               VALUES (?, ?, ?, ?, ?)""",
+            (computed_date, b["bucket"], b["predicted"], b["actual"], b["count"]),
+        )
+    conn.commit()
+
+
+def load_kobe_calibration(conn: sqlite3.Connection) -> list[dict]:
+    """Load the most recent calibration snapshot."""
+    latest = conn.execute(
+        "SELECT MAX(computed_date) FROM kobe_calibration"
+    ).fetchone()
+    if not latest or not latest[0]:
+        return []
+    rows = conn.execute(
+        """SELECT bucket, predicted_confidence, actual_win_rate, sample_count
+           FROM kobe_calibration WHERE computed_date = ?
+           ORDER BY predicted_confidence""",
+        (latest[0],),
+    ).fetchall()
+    return [{"bucket": r[0], "predicted": r[1], "actual": r[2], "count": r[3]}
+            for r in rows]
+
+
+def save_kobe_monthly(conn: sqlite3.Connection, month: str, report: dict) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO kobe_monthly (month, report_json)
+           VALUES (?, ?)""",
+        (month, json.dumps(report, ensure_ascii=False)),
+    )
+    conn.commit()
+
+
+def load_kobe_monthly(conn: sqlite3.Connection, limit: int = 12) -> list[dict]:
+    rows = conn.execute(
+        "SELECT month, report_json FROM kobe_monthly ORDER BY month DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [{"month": r[0], **json.loads(r[1])} for r in rows]
+
+
+def _parse_agent_summary_blob(blob: str | None) -> dict:
+    """从 brief 中解析行情键与技术面/基本面分数（若无则 unknown/None）。"""
+    trend, rsi = "unknown", "unknown"
+    tech_score: float | None = None
+    fund_score: float | None = None
+    if not blob:
+        return {
+            "regime_key": "unknown|unknown",
+            "tech_score": tech_score,
+            "fund_score": fund_score,
+        }
+    try:
+        data = json.loads(blob)
+    except (json.JSONDecodeError, TypeError):
+        return {
+            "regime_key": "unknown|unknown",
+            "tech_score": tech_score,
+            "fund_score": fund_score,
+        }
+    reg = data.get("regime") or {}
+    trend = reg.get("trend") or "unknown"
+    rsi_b = reg.get("rsi") or "unknown"
+    for ar in data.get("agent_results") or []:
+        if isinstance(ar, dict):
+            name = ar.get("agent_name")
+            if name == "technical":
+                tech_score = ar.get("score")
+            elif name == "fundamental":
+                fund_score = ar.get("score")
+    return {
+        "regime_key": f"{trend}|{rsi_b}",
+        "tech_score": tech_score,
+        "fund_score": fund_score,
+    }
+
+
+def load_briefs_for_learning(conn: sqlite3.Connection) -> list[dict]:
+    """Load briefs with forward price data for Buffett's learning engine."""
+    rows = conn.execute(
+        """SELECT b.date, b.action, b.confidence, b.risk_level,
+                  b.agent_summary_json,
+                  o_1d.close AS close_1d, o_5d.close AS close_5d,
+                  o_today.close AS close_today
+           FROM briefs b
+           LEFT JOIN ohlcv o_today ON o_today.date = b.date
+           LEFT JOIN ohlcv o_1d ON o_1d.date = (
+               SELECT MIN(date) FROM ohlcv WHERE date > b.date
+           )
+           LEFT JOIN ohlcv o_5d ON o_5d.date = (
+               SELECT date FROM ohlcv WHERE date > b.date
+               ORDER BY date LIMIT 1 OFFSET 4
+           )
+           WHERE o_today.close IS NOT NULL
+           ORDER BY b.date""",
+    ).fetchall()
+    cols = ["date", "action", "confidence", "risk_level",
+            "agent_summary_json", "close_1d", "close_5d", "close_today"]
+    out = []
+    for r in rows:
+        row = dict(zip(cols, r))
+        parsed = _parse_agent_summary_blob(row.pop("agent_summary_json", None))
+        row.update(parsed)
+        out.append(row)
+    return out
+
+
+def load_kobe_stats(conn: sqlite3.Connection) -> dict:
+    """Aggregate stats for Buffett's profile card."""
+    total = conn.execute("SELECT COUNT(*) FROM briefs").fetchone()[0]
+    journal_count = conn.execute("SELECT COUNT(*) FROM kobe_journal").fetchone()[0]
+    wins = conn.execute(
+        "SELECT COUNT(*) FROM kobe_journal WHERE outcome = 'correct'"
+    ).fetchone()[0]
+    losses = conn.execute(
+        "SELECT COUNT(*) FROM kobe_journal WHERE outcome = 'wrong'"
+    ).fetchone()[0]
+    weights_row = conn.execute(
+        "SELECT sample_count, created_at FROM kobe_weights ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    learning_iterations = conn.execute(
+        "SELECT COUNT(*) FROM kobe_weights"
+    ).fetchone()[0]
+
+    return {
+        "total_briefs": total,
+        "journal_entries": journal_count,
+        "wins": wins,
+        "losses": losses,
+        "win_rate": round(wins / max(wins + losses, 1) * 100, 1),
+        "learning_iterations": learning_iterations,
+        "last_learning_samples": weights_row[0] if weights_row else 0,
+        "last_learning_date": weights_row[1][:10] if weights_row else "N/A",
+    }

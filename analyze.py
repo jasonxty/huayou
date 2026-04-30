@@ -17,7 +17,7 @@ import config
 from data.store import (
     get_connection, init_db, save_ohlcv, load_ohlcv,
     save_indicators, load_indicators, save_agent_run, save_brief,
-    load_position,
+    load_position, load_kobe_calibration,
 )
 from data.fetcher import fetch_incremental
 from data.indicators import compute_all
@@ -195,6 +195,21 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
     else:
         logger.info("No position found, skipping T+0 advice")
 
+    from agents.kobe import (
+        get_active_weights,
+        run_journal_update,
+        run_learning,
+        run_calibration,
+    )
+
+    kobe_weights = get_active_weights(conn)
+    logger.info("Buffett weights loaded (regime_trust=%.2f, buy_thresh=%.0f)",
+                kobe_weights.get("regime_trust", 1.0),
+                kobe_weights.get("tech_buy_threshold", 40))
+
+    run_calibration(conn)
+    calibration_buckets = load_kobe_calibration(conn)
+
     logger.info("Synthesizing morning brief...")
     brief = synthesize(
         agent_results=agent_results,
@@ -206,6 +221,8 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         t0_advice=t0_advice,
         news_sentiment=news_sentiment,
         expert_snapshot=expert_snapshot,
+        kobe_weights=kobe_weights,
+        calibration_buckets=calibration_buckets or None,
     )
 
     save_brief(
@@ -213,6 +230,15 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         brief["confidence"], brief["risk_level"],
         brief["brief_text"], brief,
     )
+
+    journal_count = run_journal_update(conn)
+    if journal_count:
+        logger.info("Buffett journal: %d new entries written", journal_count)
+
+    new_weights = run_learning(conn)
+    if new_weights:
+        logger.info("Buffett learned: weights updated")
+
     return brief
 
 
@@ -247,6 +273,10 @@ def main():
                         help="Show recommendation performance (brief vs actual returns)")
     parser.add_argument("--simulate", type=float, default=0, metavar="CAPITAL",
                         help="Run full portfolio simulation (e.g. --simulate 100000)")
+    parser.add_argument("--buffett-backtest", action="store_true",
+                        help="Buffett 规则历史回测（约近一年交易日，需本地 huayou.db 数据）")
+    parser.add_argument("--buffett-days", type=int, default=252,
+                        metavar="N", help="与 --buffett-backtest 联用：回测交易日数量")
     parser.add_argument("--experts", action="store_true",
                         help="Show TaoGuBa expert opinions standalone")
     args = parser.parse_args()
@@ -289,6 +319,23 @@ def main():
                 print(f"     价位: {', '.join(targets)}")
             print()
         print(f"{'─' * 56}")
+        return
+
+    if args.buffett_backtest:
+        from backtest.buffett_backtest import format_buffett_backtest, run_buffett_backtest
+        conn = get_connection()
+        init_db(conn)
+        try:
+            result = run_buffett_backtest(
+                conn,
+                trading_days=args.buffett_days,
+                initial_capital=100_000.0,
+            )
+            print(format_buffett_backtest(result))
+        except ValueError as e:
+            print(f"回测无法运行: {e}")
+        finally:
+            conn.close()
         return
 
     if args.simulate > 0:

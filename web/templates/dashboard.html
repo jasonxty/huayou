@@ -28,6 +28,8 @@
        aria-controls="tab-alerts" onclick="switchTab('alerts')">Alerts</div>
   <div class="tab" role="tab" tabindex="-1" aria-selected="false"
        aria-controls="tab-briefs" onclick="switchTab('briefs')">Briefs</div>
+  <div class="tab" role="tab" tabindex="-1" aria-selected="false"
+       aria-controls="tab-kobe" onclick="switchTab('kobe')">{{ kobe_avatar }} {{ kobe_name }}</div>
 </div>
 
 <div class="tab-content" id="tab-panel">
@@ -55,6 +57,49 @@
   <div id="tab-briefs" role="tabpanel" style="display:none">
     {% include "partials/briefs.html" %}
   </div>
+  <div id="tab-kobe" role="tabpanel" style="display:none">
+    <div id="kobe-profile"
+         hx-get="/api/kobe-profile" hx-trigger="every 60s" hx-swap="innerHTML">
+      {% include "partials/kobe_profile.html" %}
+    </div>
+    <div id="kobe-journal-section"
+         hx-get="/api/kobe-journal" hx-trigger="every 60s" hx-swap="innerHTML">
+      {% include "partials/kobe_journal.html" %}
+    </div>
+    <div id="kobe-calibration-section"
+         hx-get="/api/kobe-calibration" hx-trigger="every 60s" hx-swap="innerHTML">
+      {% include "partials/kobe_calibration.html" %}
+    </div>
+    {% if kobe_monthly %}
+    <div class="section">
+      <h3>Monthly Match Reports</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Record</th>
+            <th>Win Rate</th>
+            <th>Best Day</th>
+            <th>Worst Day</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in kobe_monthly %}
+          <tr>
+            <td>{{ m.month }}</td>
+            <td>{{ m.kobe_wins }}W / {{ m.kobe_losses }}L</td>
+            <td class="{{ 'profit' if m.kobe_win_rate >= 55 else ('loss' if m.kobe_win_rate < 45 else '') }}">
+              {{ m.kobe_win_rate }}%
+            </td>
+            <td class="profit">{{ m.best_day.date }} ({{ m.best_day.return }}%)</td>
+            <td class="loss">{{ m.worst_day.date }} ({{ m.worst_day.return }}%)</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
 </div>
 
 {# Reflection note modal #}
@@ -72,7 +117,7 @@
 </div>
 
 <script>
-const TAB_NAMES = ['strategic', 'tactical', 'trades', 't0', 'alerts', 'briefs'];
+const TAB_NAMES = ['strategic', 'tactical', 'trades', 't0', 'alerts', 'briefs', 'kobe'];
 
 function switchTab(name) {
   const navItems = document.querySelectorAll('#tab-nav .tab');

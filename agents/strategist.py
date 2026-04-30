@@ -23,6 +23,50 @@ from data.taoguba import ExpertSnapshot
 
 logger = logging.getLogger(__name__)
 
+_BUCKET_LABEL_RE = re.compile(r"(\d+)-(\d+)%")
+
+
+def parse_calibration_bucket_label(label: str) -> tuple[float, float]:
+    m = _BUCKET_LABEL_RE.search(label or "")
+    if not m:
+        return 0.50, 0.60
+    return int(m.group(1)) / 100.0, int(m.group(2)) / 100.0
+
+
+def effective_signal_score(tech_score: float, fund_score: float, weights: dict) -> float:
+    """技术面与基本面加权合成，用于与阈值比较（Buffett 决策核）。"""
+    ft = weights.get("fundamental_trust", 1.0)
+    contrib = ft * fund_score * config.KOBE_FUND_BLEND_RATIO
+    return float(np.clip(tech_score + contrib, -100.0, 100.0))
+
+
+def apply_confidence_calibration(
+    confidence: float,
+    buckets: list[dict] | None,
+) -> float:
+    """用最近一次校准 bucket 的 actual/predicted 比值缩放置信度。"""
+    if not buckets:
+        return confidence
+    lo_out, hi_out = 0.30, 0.90
+    r_lo, r_hi = config.KOBE_CALIBRATION_RATIO_CLAMP
+
+    for b in buckets:
+        cnt = b.get("count") or 0
+        if cnt < 5:
+            continue
+        blo, bhi = parse_calibration_bucket_label(b.get("bucket", ""))
+        pred = b.get("predicted")
+        act = b.get("actual")
+        if pred is None or pred <= 0 or act is None:
+            continue
+        if not (blo <= confidence < bhi):
+            continue
+        ratio = act / pred
+        ratio = max(r_lo, min(r_hi, ratio))
+        cal = confidence * ratio
+        return float(max(lo_out, min(hi_out, cal)))
+    return confidence
+
 
 # ── Regime matching ──
 
@@ -191,31 +235,52 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
 
 # ── Rule-based action decision ──
 
-def _decide_action(tech_score: float, regime: dict, regime_match: dict,
-                   best_strategy: BacktestResult | None) -> tuple[str, str]:
+def _decide_action(
+    tech_score: float,
+    fund_score: float,
+    regime: dict,
+    regime_match: dict,
+    best_strategy: BacktestResult | None,
+    weights: dict | None = None,
+) -> tuple[str, str]:
     """Deterministic action and risk level from scores.
 
-    Returns (action, risk_level).
+    Uses Buffett's learned weights + 行情分桶偏移 + 基本面合成得分。
     """
+    w = weights or config.KOBE_DEFAULT_WEIGHTS
+    signal = effective_signal_score(tech_score, fund_score, w)
+
+    rk = f"{regime.get('trend', 'unknown')}|{regime.get('rsi', 'unknown')}"
+    rb = (w.get("regime_buy_adjust") or {}).get(rk, 0)
+    rs = (w.get("regime_sell_adjust") or {}).get(rk, 0)
+
+    buy_thresh = w.get("tech_buy_threshold", 40) + rb
+    mild_buy = w.get("tech_mild_buy_threshold", 20) + int(round(rb * 0.55))
+    sell_thresh = w.get("tech_sell_threshold", -40) - rs
+    mild_sell = w.get("tech_mild_sell_threshold", -20) - int(round(rs * 0.55))
+
     has_backtest_edge = best_strategy is not None and best_strategy.passes_threshold
     regime_bearish = regime.get("trend") == "down"
     regime_oversold = regime.get("rsi") == "oversold"
     regime_overbought = regime.get("rsi") == "overbought"
 
-    if tech_score >= 40 and not regime_overbought:
-        action = "BUY (积极建仓)" if has_backtest_edge else "BUY (轻仓试探)"
+    if signal >= buy_thresh and not regime_overbought:
+        action = "BUY (aggressive)" if has_backtest_edge else "BUY (light probe)"
         risk = "MEDIUM" if has_backtest_edge else "HIGH"
-    elif tech_score >= 20:
-        action = "BUY (轻仓)" if not regime_bearish else "HOLD (观望为主)"
+        if fund_score <= config.KOBE_FUND_BLOCK_AGGRESSIVE_BELOW:
+            action = "BUY (light probe)" if has_backtest_edge else "BUY (light)"
+            risk = "HIGH"
+    elif signal >= mild_buy:
+        action = "BUY (light)" if not regime_bearish else "HOLD (wait and see)"
         risk = "MEDIUM"
-    elif tech_score <= -40 and not regime_oversold:
-        action = "SELL (减仓)" if has_backtest_edge else "SELL (止损)"
+    elif signal <= sell_thresh and not regime_oversold:
+        action = "SELL (reduce)" if has_backtest_edge else "SELL (stop loss)"
         risk = "HIGH"
-    elif tech_score <= -20:
-        action = "SELL (轻仓减持)" if not regime_oversold else "HOLD (超卖反弹可能)"
+    elif signal <= mild_sell:
+        action = "SELL (trim)" if not regime_oversold else "HOLD (oversold bounce possible)"
         risk = "HIGH" if regime_bearish else "MEDIUM"
     else:
-        action = "HOLD (震荡观望)"
+        action = "HOLD (range-bound)"
         risk = "LOW"
 
     return action, risk
@@ -273,8 +338,13 @@ def synthesize(
     news_sentiment: NewsSentiment | None = None,
     expert_snapshot: ExpertSnapshot | None = None,
     analysis_date: str | None = None,
+    kobe_weights: dict | None = None,
+    calibration_buckets: list[dict] | None = None,
 ) -> dict:
-    """Produce the morning brief. Pure rule-based, no LLM needed."""
+    """Produce the morning brief. Pure rule-based, no LLM needed.
+
+    Uses Buffett's learned weights when provided.
+    """
     today = analysis_date or date.today().isoformat()
 
     best_strategy = None
@@ -301,10 +371,24 @@ def synthesize(
     resistance = tech_result.details.get("resistance", "N/A") if tech_result else "N/A"
     atr = tech_result.details.get("atr14", "N/A") if tech_result else "N/A"
 
+    w = kobe_weights or config.KOBE_DEFAULT_WEIGHTS
+    expert_mag = w.get("expert_adjustment", 0.08)
     expert_adj = _expert_confidence_adjustment(expert_snapshot, tech_score)
-    confidence = max(0.30, min(0.90, confidence + expert_adj))
+    if expert_adj != 0:
+        expert_adj = expert_mag if expert_adj > 0 else -expert_mag
 
-    action, risk_level = _decide_action(tech_score, current_regime, regime_match, best_strategy)
+    regime_trust = w.get("regime_trust", 1.0)
+    confidence = max(0.30, min(0.90, confidence * regime_trust + expert_adj))
+    confidence = apply_confidence_calibration(confidence, calibration_buckets)
+
+    action, risk_level = _decide_action(
+        tech_score,
+        fund_score,
+        current_regime,
+        regime_match,
+        best_strategy,
+        weights=w,
+    )
 
     regime_line = (
         f"  Similar setup occurred {regime_match['count']} times in 603799's history.\n"
@@ -324,10 +408,11 @@ def synthesize(
         )
 
     brief_text = f"""{'═' * 56}
-  华友钴业 (603799) — {today} Morning Brief
+  {config.KOBE_AVATAR} {config.KOBE_NAME}'s Morning Brief — {today}
+  {config.TICKER_NAME} ({config.TICKER})
 {'═' * 56}
 
-  ACTION:     {action}
+  {config.KOBE_NAME} says: {action}
   CONFIDENCE: {confidence*100:.0f}%
   RISK LEVEL: {risk_level}
   PRICE:      {latest_price:.2f}  |  ATR(14): {atr}
@@ -424,31 +509,31 @@ def synthesize(
             for label, price in list(p.signals.price_targets.items())[:3]:
                 sig_parts.append(f"{label}¥{price:.0f}")
             sig_parts.append(p.sentiment_label)
-            brief_text += f"     信号: {' | '.join(sig_parts)}\n"
+            brief_text += f"     Signals: {' | '.join(sig_parts)}\n"
 
         if expert_adj != 0:
-            direction = "一致" if expert_adj > 0 else "分歧"
-            brief_text += f"  → 大神观点与技术面{direction}, confidence {expert_adj:+.0%}\n"
+            direction = "aligned" if expert_adj > 0 else "divergent"
+            brief_text += f"  → Expert views {direction} with technicals, confidence {expert_adj:+.0%}\n"
 
     if t0_advice and t0_advice.has_position:
-        brief_text += f"\n  ── T+0 操作建议 (持仓: {t0_advice.quantity}股 @ ¥{t0_advice.cost:.1f}) ──\n"
-        brief_text += f"  浮盈亏: {t0_advice.pnl_pct:+.1f}%  (成本{t0_advice.cost:.1f} → 现价{t0_advice.current_price:.2f})\n"
+        brief_text += f"\n  ── T+0 Advice (Position: {t0_advice.quantity} shares @ ¥{t0_advice.cost:.1f}) ──\n"
+        brief_text += f"  Unrealized: {t0_advice.pnl_pct:+.1f}%  (cost {t0_advice.cost:.1f} → price {t0_advice.current_price:.2f})\n"
         if t0_advice.t0_enabled:
-            brief_text += f"  策略: {t0_advice.strategy}\n"
-            brief_text += f"  做T仓位: {t0_advice.t0_lot}股 (总仓位的{t0_advice.t0_lot/t0_advice.quantity*100:.0f}%)\n"
+            brief_text += f"  Strategy: {t0_advice.strategy}\n"
+            brief_text += f"  T+0 Lot: {t0_advice.t0_lot} shares ({t0_advice.t0_lot/t0_advice.quantity*100:.0f}% of position)\n"
             if t0_advice.sell_lot2 > 0:
-                brief_text += f"  分批高抛: 第1批{t0_advice.sell_lot1}股@¥{t0_advice.sell_zone_low:.2f}  "
-                brief_text += f"第2批{t0_advice.sell_lot2}股@¥{t0_advice.sell_zone_high:.2f}\n"
+                brief_text += f"  Split Sell: batch 1 {t0_advice.sell_lot1} @¥{t0_advice.sell_zone_low:.2f}  "
+                brief_text += f"batch 2 {t0_advice.sell_lot2} @¥{t0_advice.sell_zone_high:.2f}\n"
             else:
-                brief_text += f"  高抛区间: ¥{t0_advice.sell_zone_low:.2f} - ¥{t0_advice.sell_zone_high:.2f}\n"
-            brief_text += f"  低吸区间: ¥{t0_advice.buy_zone_low:.2f} - ¥{t0_advice.buy_zone_high:.2f}\n"
-            brief_text += f"  止损价:   ¥{t0_advice.stop_loss:.2f}\n"
+                brief_text += f"  Sell Zone: ¥{t0_advice.sell_zone_low:.2f} - ¥{t0_advice.sell_zone_high:.2f}\n"
+            brief_text += f"  Buy Zone:  ¥{t0_advice.buy_zone_low:.2f} - ¥{t0_advice.buy_zone_high:.2f}\n"
+            brief_text += f"  Stop Loss: ¥{t0_advice.stop_loss:.2f}\n"
             if t0_advice.risk_note:
                 brief_text += f"  ⚠ {t0_advice.risk_note}\n"
             for sig in t0_advice.signals:
                 brief_text += f"    • {sig}\n"
             if t0_advice.escape_plan:
-                brief_text += "  ── 卖飞应对 ──\n"
+                brief_text += "  ── Escape Plan (if sold too early) ──\n"
                 for plan in t0_advice.escape_plan:
                     brief_text += f"    → {plan}\n"
         else:
@@ -480,7 +565,11 @@ def synthesize(
         "risk_level": risk_level,
         "brief_text": brief_text,
         "key_signals": tech_result.signals if tech_result else [],
-        "reasoning": f"Tech score {tech_score:+.0f}, regime {current_regime['trend']}/{current_regime['rsi']}",
+        "reasoning": (
+            f"Signal {effective_signal_score(tech_score, fund_score, w):+.0f} "
+            f"(tech {tech_score:+.0f}, fund {fund_score:+.0f}), "
+            f"regime {current_regime['trend']}/{current_regime['rsi']}"
+        ),
         "regime": current_regime,
         "regime_match": regime_match,
         "grounding_violations": violations,

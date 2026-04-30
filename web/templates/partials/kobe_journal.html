@@ -1,0 +1,56 @@
+<div class="section">
+  <h3>{{ kobe_name }}'s Strategy Journal</h3>
+
+  {% if kobe_journal %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Action</th>
+        <th>1D Return</th>
+        <th>5D Return</th>
+        <th>Outcome</th>
+        <th>Reflection</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for j in kobe_journal %}
+      <tr>
+        <td>{{ j.entry_date }}</td>
+        <td>
+          {% set action_word = j.brief_action.split('(')[0].strip().split()[0] if j.brief_action else 'N/A' %}
+          <span class="badge {{ 'buy' if 'BUY' in (j.brief_action or '') else ('sell' if 'SELL' in (j.brief_action or '') else 'hold') }}">
+            {{ action_word }}
+          </span>
+        </td>
+        <td class="{{ 'profit' if j.actual_return_1d and j.actual_return_1d > 0 else ('loss' if j.actual_return_1d and j.actual_return_1d < 0 else '') }}">
+          {{ "%.2f"|format((j.actual_return_1d or 0) * 100) }}%
+        </td>
+        <td class="{{ 'profit' if j.actual_return_5d and j.actual_return_5d > 0 else ('loss' if j.actual_return_5d and j.actual_return_5d < 0 else '') }}">
+          {% if j.actual_return_5d is not none %}
+            {{ "%.2f"|format(j.actual_return_5d * 100) }}%
+          {% else %}
+            pending
+          {% endif %}
+        </td>
+        <td>
+          {% if j.outcome == 'correct' %}
+            <span class="badge profit-badge">&#x2713;</span>
+          {% elif j.outcome == 'wrong' %}
+            <span class="badge loss-badge">&#x2717;</span>
+          {% else %}
+            <span class="badge">&#x2014;</span>
+          {% endif %}
+        </td>
+        <td class="journal-reflection">{{ j.reflection }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state">
+    <p>No journal entries yet. {{ kobe_name }} will start reflecting after the first trading day with forward returns.</p>
+    <p class="empty-hint">Run <code>python analyze.py</code> on consecutive trading days to build up the journal.</p>
+  </div>
+  {% endif %}
+</div>
