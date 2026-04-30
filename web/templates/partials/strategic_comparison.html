@@ -12,8 +12,8 @@
   <div style="overflow-x:auto">
   <table>
     <thead><tr>
-      <th>Date</th><th>Brief Action</th><th>Confidence</th><th>Your Action</th>
-      <th>System P&amp;L</th><th>Your P&amp;L</th><th>Delta</th><th>Notes</th>
+      <th>Date</th><th>{{ kobe_name }} Signal</th><th>Conf.</th><th>Your Action</th>
+      <th>{{ kobe_name }} P&amp;L</th><th>Your P&amp;L</th><th>Delta</th><th></th>
     </tr></thead>
     <tbody>
     {% if strategic.rows %}
@@ -22,16 +22,23 @@
       {% set sys_pnl_cls = 'up' if r.sys_day_pnl > 0 else ('down' if r.sys_day_pnl < 0 else '') %}
       {% set usr_pnl_cls = 'up' if r.user_day_pnl > 0 else ('down' if r.user_day_pnl < 0 else '') %}
       {% set delta_cls = 'up' if r.delta > 0 else ('down' if r.delta < 0 else '') %}
+      {% set row_id = "reason-" ~ loop.index %}
       <tr class="{{ '' if r.matched else 'diverged' }}">
         <td class="date">{{ r.date }}</td>
-        <td class="action-cell {{ action_cls }}">{{ r.sys_action }}</td>
+        <td class="action-cell {{ action_cls }}">
+          {{ r.sys_action }}
+          {% if r.sys_detail %}<br><small class="trade-detail">{{ r.sys_detail }}</small>{% endif %}
+          {% if r.reasoning or r.key_signals %}
+          <br><button class="btn-why" onclick="toggleReason('{{ row_id }}')" title="Why this signal?">Why?</button>
+          {% endif %}
+        </td>
         <td>{{ "%.0f"|format(r.confidence * 100) }}%</td>
         <td>
           {% if r.user_action == 'No Action' or r.user_action == '\u672a\u64cd\u4f5c' %}
             <span style="color:var(--text-muted)">No Action</span>
           {% else %}
             <span class="action-cell {{ 'buy' if 'BUY' in r.user_action else 'sell' }}">{{ r.user_action }}</span>
-            {% if r.user_detail %}<br><small>{{ r.user_detail }}</small>{% endif %}
+            {% if r.user_detail %}<br><small class="trade-detail">{{ r.user_detail }}</small>{% endif %}
           {% endif %}
         </td>
         <td class="mono {{ sys_pnl_cls }}">{% if r.sys_day_pnl != 0 %}{{ '+' if r.sys_day_pnl > 0 else '' }}&#165;{{ "{:,.0f}".format(r.sys_day_pnl) }}{% else %}&mdash;{% endif %}</td>
@@ -45,6 +52,24 @@
                   title="Add reflection">&#x270F;&#xFE0F;</button>
         </td>
       </tr>
+      {% if r.reasoning or r.key_signals %}
+      <tr class="reason-row" id="{{ row_id }}" style="display:none">
+        <td colspan="8">
+          <div class="reason-content">
+            {% if r.reasoning %}
+            <span class="reason-formula">{{ r.reasoning }}</span>
+            {% endif %}
+            {% if r.key_signals %}
+            <ul class="reason-signals">
+              {% for sig in r.key_signals %}
+              <li>{{ sig }}</li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endif %}
       {% endfor %}
     {% else %}
       <tr><td colspan="8" class="empty">
@@ -61,3 +86,11 @@
   </table>
   </div>
 </section>
+
+<script>
+function toggleReason(id) {
+  var row = document.getElementById(id);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+}
+</script>

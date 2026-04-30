@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict
 from datetime import datetime
@@ -156,7 +157,7 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
     Returns dict with rows, stats, and dual-track PnL.
     """
     briefs = conn.execute(
-        "SELECT date, action, confidence FROM briefs ORDER BY date"
+        "SELECT date, action, confidence, agent_summary_json FROM briefs ORDER BY date"
     ).fetchall()
     if not briefs:
         return {"rows": [], "stats": {}, "system_pnl": 0, "user_pnl": 0,
@@ -205,13 +206,26 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
     sys_win = 0
     user_win = 0
 
-    for brief_date, brief_action_raw, confidence in briefs:
+    for brief_date, brief_action_raw, confidence, summary_json in briefs:
         sys_action = _parse_brief_action(brief_action_raw)
         day_ohlcv = ohlcv_map.get(brief_date)
         open_price = day_ohlcv["open"] if day_ohlcv else 0
         close_price = day_ohlcv["close"] if day_ohlcv else 0
 
+        reasoning = ""
+        key_signals: list[str] = []
+        if summary_json:
+            try:
+                blob = json.loads(summary_json)
+                reasoning = blob.get("reasoning", "")
+                key_signals = blob.get("key_signals", [])[:5]
+            except (ValueError, TypeError):
+                pass
+
         sys_day_pnl = 0.0
+        sys_trade_price = 0.0
+        sys_trade_qty = 0
+        sys_trade_dir = ""
         if open_price > 0:
             if sys_action == "BUY" and sys_cash > 0:
                 can_buy = int(sys_cash / (open_price * 1.0003)) // 100 * 100
@@ -224,6 +238,9 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
                     else:
                         sys_cost = open_price
                     sys_shares += can_buy
+                    sys_trade_price = open_price
+                    sys_trade_qty = can_buy
+                    sys_trade_dir = "BUY"
             elif sys_action == "SELL" and sys_shares > 0:
                 sell_qty = sys_shares // 2 if sys_shares >= 200 else sys_shares
                 revenue = sell_qty * open_price
@@ -233,6 +250,9 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
                 sys_shares -= sell_qty
                 if sys_shares == 0:
                     sys_cost = 0.0
+                sys_trade_price = open_price
+                sys_trade_qty = sell_qty
+                sys_trade_dir = "SELL"
 
         day_trades = trades_by_date.get(brief_date, [])
         user_action = "No Action"
@@ -245,8 +265,12 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
                 user_action = "BUY"
             else:
                 user_action = "SELL"
-            prices = [f"¥{t['price']:.2f}" for t in day_trades]
-            user_day_detail = ", ".join(prices)
+            parts = [f"{t['direction']} {t['quantity']} @¥{t['price']:.2f}" for t in day_trades]
+            user_day_detail = " | ".join(parts)
+
+        sys_detail = ""
+        if sys_trade_qty > 0:
+            sys_detail = f"{sys_trade_dir} {sys_trade_qty} @¥{sys_trade_price:.2f}"
 
         matched = (
             (sys_action == "BUY" and "BUY" in (user_action,))
@@ -279,6 +303,9 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
         rows.append({
             "date": brief_date,
             "sys_action": sys_action,
+            "sys_detail": sys_detail,
+            "reasoning": reasoning,
+            "key_signals": key_signals,
             "confidence": confidence or 0,
             "user_action": user_action,
             "user_detail": user_day_detail,
