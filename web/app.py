@@ -20,6 +20,8 @@ import config
 from data.store import (
     get_connection, init_db, save_trade, save_position,
     load_position, record_t0_trade, delete_trade,
+    load_kobe_stats, load_kobe_journal, load_kobe_calibration,
+    load_kobe_monthly,
 )
 from web.services import (
     ALERT_ICONS, get_latest_price, get_portfolio_data,
@@ -27,7 +29,10 @@ from web.services import (
     get_brief_list, get_brief_detail, get_monitor_status,
     get_comparison_hero, get_strategic_comparison, get_tactical_comparison,
 )
-from data.store import save_decision_note
+from data.store import save_decision_note, save_kobe_weights
+from agents.kobe import get_active_weights
+from backtest.buffett_backtest import format_buffett_backtest, run_buffett_backtest
+from backtest.t0_backtest import format_t0_backtest, run_t0_backtest
 
 app = FastAPI(title="Huayou Cobalt Dashboard")
 
@@ -73,6 +78,8 @@ def _base_ctx() -> dict:
     return {
         "ticker": config.TICKER,
         "ticker_name": config.TICKER_NAME,
+        "kobe_name": config.KOBE_NAME,
+        "kobe_avatar": config.KOBE_AVATAR,
         "now": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "today": date.today().isoformat(),
         "monitor_status": get_monitor_status(),
@@ -99,6 +106,11 @@ async def dashboard():
         ctx["hero"] = get_comparison_hero(conn)
         ctx["strategic"] = get_strategic_comparison(conn)
         ctx["tactical"] = get_tactical_comparison(conn)
+        ctx["kobe_stats"] = load_kobe_stats(conn)
+        ctx["kobe_journal"] = load_kobe_journal(conn, limit=20)
+        ctx["kobe_calibration"] = load_kobe_calibration(conn)
+        ctx["kobe_weights"] = get_active_weights(conn)
+        ctx["kobe_monthly"] = load_kobe_monthly(conn, limit=6)
     finally:
         conn.close()
     return _render("dashboard.html", **ctx)
@@ -124,6 +136,143 @@ async def brief_detail_page(brief_date: str):
     ctx["action_cls"] = {"BUY": "buy", "SELL": "sell", "HOLD": "hold"}.get(action_word, "")
     ctx["risk_cls"] = {"LOW": "low", "MEDIUM": "med", "HIGH": "high"}.get(risk, "")
     return _render("brief_detail.html", **ctx)
+
+
+@app.get("/buffett-backtest", response_class=HTMLResponse)
+async def buffett_backtest_page():
+    ctx = _base_ctx()
+    ctx["default_days"] = 252
+    return _render("buffett_backtest.html", **ctx)
+
+
+@app.get("/t0-backtest", response_class=HTMLResponse)
+async def t0_backtest_page():
+    ctx = _base_ctx()
+    conn = get_connection()
+    init_db(conn)
+    try:
+        pos = load_position(conn)
+    finally:
+        conn.close()
+    ctx["default_qty"] = pos["quantity"] if pos and pos.get("quantity", 0) > 0 else 1000
+    ctx["default_cost"] = round(pos["cost"], 2) if pos and pos.get("cost", 0) > 0 else 65.0
+    ctx["default_days"] = 252
+    return _render("t0_backtest.html", **ctx)
+
+
+WEIGHT_META = [
+    {
+        "key": "tech_buy_threshold",
+        "label": "BUY Threshold",
+        "desc": "Tech score needed for a BUY signal. Higher = more conservative, fewer buys.",
+        "step": 1,
+    },
+    {
+        "key": "tech_mild_buy_threshold",
+        "label": "Light BUY Threshold",
+        "desc": "Tech score for a light/probe BUY. Higher = fewer light buys triggered.",
+        "step": 1,
+    },
+    {
+        "key": "tech_sell_threshold",
+        "label": "SELL Threshold",
+        "desc": "Tech score for a SELL signal (negative). More negative = harder to trigger sells.",
+        "step": 1,
+    },
+    {
+        "key": "tech_mild_sell_threshold",
+        "label": "Light SELL Threshold",
+        "desc": "Tech score for a light/trim SELL (negative). More negative = fewer light sells.",
+        "step": 1,
+    },
+    {
+        "key": "expert_adjustment",
+        "label": "Expert Influence",
+        "desc": "How much expert consensus shifts confidence (0.02 = minimal, 0.15 = heavy).",
+        "step": 0.01,
+    },
+    {
+        "key": "regime_trust",
+        "label": "Regime Trust",
+        "desc": "Multiplier on regime-based confidence. >1 = trust historical patterns more, <1 = less.",
+        "step": 0.05,
+    },
+    {
+        "key": "fundamental_trust",
+        "label": "Fundamental Trust",
+        "desc": "Multiplier on fundamental score influence. >1 = weight fundamentals more, <1 = less.",
+        "step": 0.05,
+    },
+]
+
+
+@app.get("/control-panel", response_class=HTMLResponse)
+async def control_panel_page():
+    ctx = _base_ctx()
+    conn = get_connection()
+    init_db(conn)
+    try:
+        active = get_active_weights(conn)
+    finally:
+        conn.close()
+    defaults = config.KOBE_DEFAULT_WEIGHTS
+    bounds = config.KOBE_WEIGHT_BOUNDS
+    weights = []
+    for m in WEIGHT_META:
+        k = m["key"]
+        lo, hi = bounds.get(k, (0, 100))
+        weights.append({
+            **m,
+            "value": active.get(k, defaults.get(k, 0)),
+            "default": defaults.get(k, 0),
+            "min": lo,
+            "max": hi,
+        })
+    ctx["weights"] = weights
+    ctx["min_samples"] = config.KOBE_MIN_SAMPLES_FOR_LEARNING
+    return _render("control_panel.html", **ctx)
+
+
+@app.post("/control-panel", response_class=HTMLResponse)
+async def save_control_panel(request: Request):
+    form = await request.form()
+    defaults = config.KOBE_DEFAULT_WEIGHTS
+    bounds = config.KOBE_WEIGHT_BOUNDS
+    new_weights = {}
+    for m in WEIGHT_META:
+        k = m["key"]
+        raw = form.get(k)
+        if raw is None:
+            new_weights[k] = defaults.get(k, 0)
+            continue
+        val = float(raw)
+        lo, hi = bounds.get(k, (-9999, 9999))
+        new_weights[k] = max(lo, min(hi, val))
+
+    conn = get_connection()
+    init_db(conn)
+    try:
+        save_kobe_weights(conn, new_weights, reason="manual override")
+    finally:
+        conn.close()
+
+    ctx = _base_ctx()
+    ctx["flash_message"] = "Weights saved. They will take effect on the next morning brief."
+    ctx["flash_type"] = "success"
+    active = new_weights
+    weights = []
+    for m in WEIGHT_META:
+        k = m["key"]
+        lo, hi = bounds.get(k, (0, 100))
+        weights.append({
+            **m,
+            "value": active.get(k, defaults.get(k, 0)),
+            "default": defaults.get(k, 0),
+            "min": lo,
+            "max": hi,
+        })
+    ctx["weights"] = weights
+    return _render("control_panel.html", **ctx)
 
 
 # ── HTMX partial / API routes ──────────────────────────────────────────
@@ -219,9 +368,111 @@ async def api_tactical_comparison():
     return _render("partials/tactical_comparison.html", tactical=tactical)
 
 
+@app.get("/api/kobe-profile", response_class=HTMLResponse)
+async def api_kobe_profile():
+    conn = get_connection()
+    init_db(conn)
+    try:
+        kobe_stats = load_kobe_stats(conn)
+        kobe_weights = get_active_weights(conn)
+    finally:
+        conn.close()
+    return _render("partials/kobe_profile.html",
+                   kobe_stats=kobe_stats, kobe_weights=kobe_weights,
+                   kobe_name=config.KOBE_NAME, kobe_avatar=config.KOBE_AVATAR)
+
+
+@app.get("/api/kobe-journal", response_class=HTMLResponse)
+async def api_kobe_journal():
+    conn = get_connection()
+    init_db(conn)
+    try:
+        journal = load_kobe_journal(conn, limit=20)
+    finally:
+        conn.close()
+    return _render("partials/kobe_journal.html",
+                   kobe_journal=journal, kobe_name=config.KOBE_NAME)
+
+
+@app.get("/api/kobe-calibration", response_class=HTMLResponse)
+async def api_kobe_calibration():
+    conn = get_connection()
+    init_db(conn)
+    try:
+        calibration = load_kobe_calibration(conn)
+    finally:
+        conn.close()
+    return _render("partials/kobe_calibration.html",
+                   kobe_calibration=calibration, kobe_name=config.KOBE_NAME)
+
+
 @app.get("/api/monitor-status")
 async def api_monitor_status():
     return get_monitor_status()
+
+
+@app.get("/api/buffett-backtest", response_class=HTMLResponse)
+async def api_buffett_backtest(days: int = 252, walk_forward: bool = False):
+    ctx = _base_ctx()
+    td = min(max(days, 50), 500)
+    conn = get_connection()
+    init_db(conn)
+    try:
+        bt = run_buffett_backtest(
+            conn,
+            trading_days=td,
+            include_walk_forward=walk_forward,
+        )
+    except ValueError as e:
+        ctx["error_message"] = str(e)
+        return _render("partials/buffett_backtest_error.html", **ctx)
+    finally:
+        conn.close()
+
+    ctx["bt"] = bt
+    ctx["report_text"] = format_buffett_backtest(bt)
+    ctx["days_used"] = td
+    ctx["walk_forward"] = walk_forward
+    return _render("partials/buffett_backtest_content.html", **ctx)
+
+
+@app.get("/api/t0-backtest", response_class=HTMLResponse)
+async def api_t0_backtest(
+    days: int = 252,
+    position_qty: int = 1000,
+    position_cost: float = 65.0,
+):
+    ctx = _base_ctx()
+    from data.store import load_ohlcv
+    conn = get_connection()
+    init_db(conn)
+    try:
+        ohlcv = load_ohlcv(conn)
+    except Exception as e:
+        ctx["error_message"] = str(e)
+        return _render("partials/t0_backtest_error.html", **ctx)
+    finally:
+        conn.close()
+
+    if ohlcv.empty:
+        ctx["error_message"] = "No OHLCV data — run python analyze.py first."
+        return _render("partials/t0_backtest_error.html", **ctx)
+
+    try:
+        bt = run_t0_backtest(
+            ohlcv,
+            position_qty=max(200, position_qty),
+            position_cost=max(0.01, position_cost),
+            lookback_years=max(1, days // 252) or 1,
+        )
+    except Exception as e:
+        ctx["error_message"] = str(e)
+        return _render("partials/t0_backtest_error.html", **ctx)
+
+    ctx["bt"] = bt
+    ctx["report_text"] = format_t0_backtest(bt)
+    ctx["days_used"] = days
+    return _render("partials/t0_backtest_content.html", **ctx)
 
 
 # ── Form actions ────────────────────────────────────────────────────────

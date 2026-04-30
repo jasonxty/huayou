@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=8">
 <script src="/static/htmx.min.js"></script>
 </head>
 <body>
@@ -15,10 +15,22 @@
 
 <header>
   <div class="header-left">
-    <h1><span class="ticker">{{ ticker_name }}</span> Dashboard</h1>
+    <h1>{{ kobe_avatar }} <span class="ticker">{{ ticker_name }}</span> Dashboard</h1>
     <div class="subtitle">
-      {{ ticker }} &middot; Portfolio &middot; Trades &middot; Alerts &middot; Briefs &middot; {{ now }}
+      {{ ticker }} &middot; {{ kobe_name }} &middot; Portfolio &middot; Trades &middot; Alerts &middot; Briefs &middot; {{ now }}
     </div>
+    <nav class="header-nav" aria-label="Section navigation">
+      <a href="/" hx-disable hx-boost="false">Overview</a>
+      <form class="header-nav-form" action="/buffett-backtest" method="get" hx-disable>
+        <button type="submit" class="header-nav-btn">{{ kobe_name }} Backtest</button>
+      </form>
+      <form class="header-nav-form" action="/t0-backtest" method="get" hx-disable>
+        <button type="submit" class="header-nav-btn">T+0 Backtest</button>
+      </form>
+      <form class="header-nav-form" action="/control-panel" method="get" hx-disable>
+        <button type="submit" class="header-nav-btn">Control Panel</button>
+      </form>
+    </nav>
   </div>
   {% if monitor_status and monitor_status.running %}
     <span class="status-badge online"><span class="status-dot"></span>Monitoring</span>

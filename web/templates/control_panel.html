@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block title %}Control Panel · {{ ticker_name }}{% endblock %}
+
+{% block content %}
+
+<section class="card cp-intro">
+  <h2 class="section-title">{{ kobe_avatar }} {{ kobe_name }} Control Panel</h2>
+  <p class="subtitle-text">
+    These weights control how the morning brief decides BUY / SELL / HOLD.
+    Buffett's learning engine adjusts them automatically over time, but you can override them here.
+  </p>
+</section>
+
+<section class="card cp-explainer">
+  <h3 class="section-title">How the Decision Works</h3>
+
+  <div class="cp-step">
+    <div class="cp-step-num">1</div>
+    <div class="cp-step-body">
+      <h4>Compute the Signal Score</h4>
+      <div class="cp-formula">Signal = Tech Score + Fund Score &times; <strong>Fundamental Trust</strong> &times; 0.35</div>
+      <p>
+        Every morning, the system scores the stock's technicals (MA, MACD, RSI, KDJ, Bollinger, volume)
+        on a scale of <strong>&minus;100 to +100</strong>. Fundamentals (growth, valuation, profitability) are scored
+        separately. The <strong>Fundamental Trust</strong> weight controls how much the fundamental score
+        blends into the final signal. Set it higher to let fundamentals override weak technicals,
+        or lower to trade purely on chart patterns.
+      </p>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">2</div>
+    <div class="cp-step-body">
+      <h4>Compare Against Thresholds</h4>
+      <div class="cp-threshold-table">
+        <div class="cp-thresh-row cp-thresh-buy2">
+          <span class="cp-thresh-label">Signal &ge; <strong>BUY Threshold</strong></span>
+          <span class="cp-thresh-action">&rarr; BUY (aggressive)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-buy1">
+          <span class="cp-thresh-label">Signal &ge; <strong>Light BUY Threshold</strong></span>
+          <span class="cp-thresh-action">&rarr; BUY (light)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-hold">
+          <span class="cp-thresh-label">Between the two thresholds</span>
+          <span class="cp-thresh-action">&rarr; HOLD</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-sell1">
+          <span class="cp-thresh-label">Signal &le; <strong>Light SELL Threshold</strong></span>
+          <span class="cp-thresh-action">&rarr; SELL (trim)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-sell2">
+          <span class="cp-thresh-label">Signal &le; <strong>SELL Threshold</strong></span>
+          <span class="cp-thresh-action">&rarr; SELL (reduce)</span>
+        </div>
+      </div>
+      <p>
+        The four thresholds define five zones on the signal scale.
+        <strong>Raising</strong> the BUY thresholds makes Buffett pickier about buying (fewer, higher-conviction entries).
+        <strong>Lowering</strong> the SELL thresholds (more negative) means Buffett only sells in more extreme downturns.
+      </p>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">3</div>
+    <div class="cp-step-body">
+      <h4>Compute Confidence</h4>
+      <div class="cp-formula">Confidence = Base Confidence &times; <strong>Regime Trust</strong> + <strong>Expert Influence</strong></div>
+      <p>
+        Base confidence comes from how well the current market pattern matches historical outcomes.
+        <strong>Regime Trust</strong> scales this up or down &mdash; set &gt;1.0 if you believe history repeats,
+        &lt;1.0 if you think "this time is different."
+        <strong>Expert Influence</strong> is the boost (or penalty) applied when TaoGuBa experts agree
+        (or disagree) with the technical direction. A value of 0.08 means &plusmn;8% confidence shift.
+      </p>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">4</div>
+    <div class="cp-step-body">
+      <h4>Safety Overrides</h4>
+      <p>
+        Even after the formula runs, Buffett applies safety checks:
+        overbought RSI blocks aggressive BUY; oversold RSI blocks SELL;
+        very poor fundamentals downgrade aggressive BUY to light BUY.
+        These are hardcoded guardrails you cannot override here.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="card cp-explainer">
+  <h3 class="section-title">How the Learning Engine Works</h3>
+  <p class="cp-learning-intro">
+    Every time the morning brief runs, Buffett looks back at past signals and checks whether they were right or wrong.
+    Based on the win rate, it nudges the weights up or down in small steps. You never have to touch anything &mdash;
+    but if you disagree with a direction, you can override below.
+  </p>
+
+  <div class="cp-step">
+    <div class="cp-step-num">1</div>
+    <div class="cp-step-body">
+      <h4>Score Each Past Signal</h4>
+      <p>
+        For every past brief, the engine checks what actually happened 1 day and 5 days later
+        (blended 60/40). It classifies each signal as:
+      </p>
+      <div class="cp-outcome-legend">
+        <span class="cp-outcome cp-outcome-correct">Correct</span> &mdash; BUY and price went up (net of fees), or SELL and price dropped, or HOLD and market was flat
+        <br>
+        <span class="cp-outcome cp-outcome-wrong">Wrong</span> &mdash; the opposite happened
+        <br>
+        <span class="cp-outcome cp-outcome-neutral">Neutral</span> &mdash; HOLD and the market moved moderately (inconclusive)
+      </div>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">2</div>
+    <div class="cp-step-body">
+      <h4>Adjust Weights Based on Win Rate</h4>
+      <p>
+        The engine looks at the win rate for BUY calls, SELL calls, and overall accuracy, then nudges
+        the corresponding weights. The rules are simple and conservative:
+      </p>
+      <div class="cp-threshold-table">
+        <div class="cp-thresh-row cp-thresh-sell2">
+          <span class="cp-thresh-label">BUY win rate <strong>&lt; 40%</strong></span>
+          <span class="cp-thresh-action">&rarr; Raise BUY Threshold (be pickier about buying)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-buy2">
+          <span class="cp-thresh-label">BUY win rate <strong>&gt; 70%</strong></span>
+          <span class="cp-thresh-action">&rarr; Lower BUY Threshold (buy more often since it&rsquo;s working)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-sell2">
+          <span class="cp-thresh-label">SELL win rate <strong>&lt; 40%</strong></span>
+          <span class="cp-thresh-action">&rarr; Lower SELL Threshold (require stronger bearish signal to sell)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-buy2">
+          <span class="cp-thresh-label">SELL win rate <strong>&gt; 70%</strong></span>
+          <span class="cp-thresh-action">&rarr; Raise SELL Threshold (sell more readily since it&rsquo;s working)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-sell1">
+          <span class="cp-thresh-label">Overall win rate <strong>&lt; 45%</strong></span>
+          <span class="cp-thresh-action">&rarr; Reduce Regime Trust &amp; Expert Influence (trust patterns less)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-buy1">
+          <span class="cp-thresh-label">Overall win rate <strong>&gt; 65%</strong></span>
+          <span class="cp-thresh-action">&rarr; Increase Regime Trust &amp; Expert Influence (trust them more)</span>
+        </div>
+      </div>
+      <p>
+        Between 40&ndash;70% (BUY/SELL) and 45&ndash;65% (overall), no changes are made &mdash; the weights stay put.
+        All adjustments are small incremental steps, clamped within the min/max range shown on each card below.
+        Needs at least {{ min_samples }} briefs before any learning kicks in.
+      </p>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">3</div>
+    <div class="cp-step-body">
+      <h4>Per-Regime Fine-Tuning</h4>
+      <p>
+        Beyond the global weights, the engine also tracks accuracy <em>per market regime</em>
+        (e.g., &ldquo;uptrend + neutral RSI&rdquo; vs. &ldquo;downtrend + overbought RSI&rdquo;).
+        If BUY calls keep failing in a specific regime, the threshold gets raised <em>just for that regime</em>.
+        These per-regime adjustments are not shown on this page but are applied automatically.
+      </p>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">4</div>
+    <div class="cp-step-body">
+      <h4>Your Override</h4>
+      <p>
+        When you save weights below, they immediately override whatever the learning engine computed.
+        The next time the engine runs, it will start from <em>your</em> values and make adjustments from there.
+        Use &ldquo;Reset to Defaults&rdquo; to go back to the original starting point.
+      </p>
+    </div>
+  </div>
+</section>
+
+<form method="post" action="/control-panel" class="cp-form">
+  <div class="cp-grid">
+    {% for w in weights %}
+    <div class="cp-card card">
+      <div class="cp-card-header">
+        <span class="cp-card-label">{{ w.label }}</span>
+        <code class="cp-card-key">{{ w.key }}</code>
+      </div>
+      <p class="cp-card-desc">{{ w.desc }}</p>
+      <div class="cp-card-controls">
+        <input type="range"
+               name="{{ w.key }}"
+               id="range-{{ w.key }}"
+               min="{{ w.min }}" max="{{ w.max }}" step="{{ w.step }}"
+               value="{{ w.value }}"
+               data-default="{{ w.default }}"
+               oninput="document.getElementById('num-{{ w.key }}').value=this.value">
+        <input type="number"
+               id="num-{{ w.key }}"
+               min="{{ w.min }}" max="{{ w.max }}" step="{{ w.step }}"
+               value="{{ w.value }}"
+               oninput="document.getElementById('range-{{ w.key }}').value=this.value">
+      </div>
+      <div class="cp-card-meta">
+        <span>Default: <strong>{{ w.default }}</strong></span>
+        <span>Range: {{ w.min }} &ndash; {{ w.max }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="cp-actions">
+    <button type="button" class="btn btn-ghost" onclick="resetDefaults()">Reset to Defaults</button>
+    <button type="submit" class="btn btn-primary">Save Weights</button>
+  </div>
+</form>
+
+<script>
+function resetDefaults() {
+  document.querySelectorAll('.cp-card-controls input[type=range]').forEach(function(slider) {
+    var def = slider.getAttribute('data-default');
+    slider.value = def;
+    var numId = slider.id.replace('range-', 'num-');
+    document.getElementById(numId).value = def;
+  });
+}
+</script>
+
+{% endblock %}
