@@ -119,7 +119,7 @@ def run_buffett_backtest(
             slice_ind = sub[ind_cols].copy()
 
             tech_result = analyze_technical(slice_ohlcv, slice_ind)
-            regime = classify_regime(slice_ind)
+            regime = classify_regime(slice_ind, slice_ohlcv)
             regime_match = match_historical_regime(slice_ind, slice_ohlcv, regime)
             latest_price = float(slice_ohlcv.iloc[-1]["close"])
 

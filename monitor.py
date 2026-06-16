@@ -256,7 +256,7 @@ def compute_t0_advice() -> T0Advice | None:
 
         latest_price = float(ohlcv.iloc[-1]["close"])
         tech = analyze_technical(ohlcv, indicators)
-        regime = classify_regime(indicators)
+        regime = classify_regime(indicators, ohlcv)
         latest_ind = indicators.iloc[-1]
 
         return advise_t0(
