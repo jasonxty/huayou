@@ -12,7 +12,7 @@ import config
 from data.store import (
     load_alerts, load_alerts_with_ids, load_position, load_trade_log,
     load_trade_log_with_ids, load_t0_trades, load_ohlcv,
-    load_decision_notes,
+    load_decision_notes, load_buffett_reset,
 )
 from monitor import fetch_realtime_quote
 
@@ -156,12 +156,20 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
 
     Returns dict with rows, stats, and dual-track PnL.
     """
+    reset = load_buffett_reset(conn)
+
     briefs = conn.execute(
         "SELECT date, action, confidence, agent_summary_json FROM briefs ORDER BY date"
     ).fetchall()
     if not briefs:
         return {"rows": [], "stats": {}, "system_pnl": 0, "user_pnl": 0,
                 "brief_count": 0}
+
+    if reset:
+        briefs = [b for b in briefs if b[0] >= reset["reset_date"]]
+        if not briefs:
+            return {"rows": [], "stats": {}, "system_pnl": 0, "user_pnl": 0,
+                    "brief_count": 0}
 
     trades = load_trade_log(conn)
     trades_by_date: dict[str, list[dict]] = defaultdict(list)
@@ -177,28 +185,37 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
 
     notes = load_decision_notes(conn)
 
-    first_brief_date = briefs[0][0]
+    if reset:
+        sys_shares = reset["shares"]
+        sys_cost = reset["cost"]
+        sys_cash = reset["cash"]
+    else:
+        first_brief_date = briefs[0][0]
+        pre_trades = [t for t in trades if t["trade_date"] <= first_brief_date]
+        sys_shares = 0
+        sys_cost = 0.0
+        sys_cash = 0.0
+        for t in sorted(pre_trades, key=lambda x: x["trade_date"]):
+            if t["direction"] == "BUY":
+                new_qty = sys_shares + t["quantity"]
+                if new_qty > 0:
+                    sys_cost = (sys_cost * sys_shares + t["price"] * t["quantity"]) / new_qty
+                sys_shares = new_qty
+                sys_cash -= (t["amount"] + t["fee"])
+            else:
+                sys_shares -= t["quantity"]
+                sys_cash += (t["amount"] - t["fee"])
 
-    pre_trades = [t for t in trades if t["trade_date"] <= first_brief_date]
-    sys_shares = 0
-    sys_cost = 0.0
-    sys_cash = 0.0
-    for t in sorted(pre_trades, key=lambda x: x["trade_date"]):
-        if t["direction"] == "BUY":
-            new_qty = sys_shares + t["quantity"]
-            if new_qty > 0:
-                sys_cost = (sys_cost * sys_shares + t["price"] * t["quantity"]) / new_qty
-            sys_shares = new_qty
-            sys_cash -= (t["amount"] + t["fee"])
-        else:
-            sys_shares -= t["quantity"]
-            sys_cash += (t["amount"] - t["fee"])
+    initial_cost = sys_cost * sys_shares if sys_shares > 0 else 100000
 
-    total_invested = sum(t["amount"] for t in trades if t["direction"] == "BUY")
-    initial_cost = sys_cost * sys_shares if sys_shares > 0 else (total_invested if total_invested > 0 else 100000)
+    reset_date = reset["reset_date"] if reset else None
+    post_trades = [t for t in trades if t["trade_date"] >= reset_date] if reset_date else trades
+    total_invested = sum(t["amount"] for t in post_trades if t["direction"] == "BUY")
+    if not total_invested and reset:
+        total_invested = initial_cost
 
-    user_total_buy = sum(t["amount"] + t["fee"] for t in trades if t["direction"] == "BUY")
-    user_total_sell = sum(t["amount"] - t["fee"] for t in trades if t["direction"] == "SELL")
+    user_total_buy = sum(t["amount"] + t["fee"] for t in post_trades if t["direction"] == "BUY")
+    user_total_sell = sum(t["amount"] - t["fee"] for t in post_trades if t["direction"] == "SELL")
 
     rows = []
     match_count = 0
@@ -214,11 +231,13 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
 
         reasoning = ""
         key_signals: list[str] = []
+        strategy_mode = ""
         if summary_json:
             try:
                 blob = json.loads(summary_json)
                 reasoning = blob.get("reasoning", "")
                 key_signals = blob.get("key_signals", [])[:5]
+                strategy_mode = blob.get("strategy_mode", "")
             except (ValueError, TypeError):
                 pass
 
@@ -305,6 +324,7 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
             "sys_action": sys_action,
             "sys_detail": sys_detail,
             "reasoning": reasoning,
+            "strategy_mode": strategy_mode,
             "key_signals": key_signals,
             "confidence": confidence or 0,
             "user_action": user_action,
@@ -334,9 +354,15 @@ def get_strategic_comparison(conn: sqlite3.Connection) -> dict:
 
     pos = load_position(conn)
     user_qty = pos["quantity"] if pos else 0
+    user_cost = pos["cost"] if pos else 0
     user_market = user_qty * latest_price if latest_price > 0 else 0
     user_est_fee = config.calc_trade_fee(user_market, "SELL") if user_market > 0 else 0
-    user_pnl = user_market + user_total_sell - user_total_buy - user_est_fee
+
+    if reset:
+        user_unrealized = (latest_price - reset["cost"]) * user_qty if user_qty > 0 and latest_price > 0 else 0
+        user_pnl = user_unrealized + user_total_sell - user_total_buy - user_est_fee
+    else:
+        user_pnl = user_market + user_total_sell - user_total_buy - user_est_fee
 
     total_signals = sum(1 for r in rows if r["sys_action"] != "HOLD")
     adopt_rate = match_count / total_signals * 100 if total_signals > 0 else 0
@@ -368,7 +394,12 @@ def get_tactical_comparison(conn: sqlite3.Connection) -> dict:
     Matches alerts to T+0 trades by date. For each alert, checks if
     the user executed a similar T+0 trade on the same day.
     """
+    reset = load_buffett_reset(conn)
+    reset_date = reset["reset_date"] if reset else None
+
     alerts = load_alerts_with_ids(conn)
+    if reset_date:
+        alerts = [a for a in alerts if a["alert_date"] >= reset_date]
     t0_trades = load_t0_trades(conn)
     notes = load_decision_notes(conn)
 
@@ -449,16 +480,15 @@ def get_comparison_hero(conn: sqlite3.Connection) -> dict:
     strat = get_strategic_comparison(conn)
     tact = get_tactical_comparison(conn)
 
-    sys_total = strat["system_pnl"] + tact["alert_total_pnl"]
-    user_total = strat["user_pnl"] + tact["user_t0_total_pnl"]
-    delta = sys_total - user_total
+    delta = strat["system_pnl"] - strat["user_pnl"]
 
     return {
-        "system_pnl": round(sys_total, 1),
-        "user_pnl": round(user_total, 1),
+        "system_pnl": round(strat["system_pnl"], 1),
+        "user_pnl": round(strat["user_pnl"], 1),
         "delta": round(delta, 1),
         "system_pnl_pct": strat["system_pnl_pct"],
         "user_pnl_pct": strat["user_pnl_pct"],
+        "t0_pnl": round(tact["alert_total_pnl"], 1),
         "leader": "system" if delta > 0 else ("user" if delta < 0 else "tie"),
         "brief_count": strat["brief_count"],
         "alert_count": tact["stats"]["total_alerts"],

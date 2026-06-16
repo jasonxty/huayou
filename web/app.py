@@ -203,6 +203,12 @@ WEIGHT_META = [
         "desc": "Multiplier on fundamental score influence. >1 = weight fundamentals more, <1 = less.",
         "step": 0.05,
     },
+    {
+        "key": "commodity_weight",
+        "label": "Commodity Signal Weight",
+        "desc": "Multiplier on SHFE nickel/lithium price momentum signal. Higher = let commodity prices influence buy/sell more.",
+        "step": 0.1,
+    },
 ]
 
 

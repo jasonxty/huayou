@@ -313,6 +313,23 @@ tr.reason-row td {
   border-left: 3px solid var(--accent);
   border-radius: 0 6px 6px 0;
 }
+.reason-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-dim);
+}
+.reason-tag-trend-follow { background: rgba(16,185,129,0.15); color: #10b981; }
+.reason-tag-swing-range { background: rgba(59,130,246,0.15); color: #3b82f6; }
+.reason-tag-defensive-exit { background: rgba(239,68,68,0.15); color: #ef4444; }
+.reason-tag-contrarian-bounce { background: rgba(245,158,11,0.15); color: #f59e0b; }
+.reason-tag-capitulation-watch { background: rgba(168,85,247,0.15); color: #a855f7; }
 .reason-formula {
   display: block;
   font-family: 'SF Mono', 'Fira Code', monospace;

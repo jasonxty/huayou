@@ -19,13 +19,15 @@
     <div class="cp-step-num">1</div>
     <div class="cp-step-body">
       <h4>Compute the Signal Score</h4>
-      <div class="cp-formula">Signal = Tech Score + Fund Score &times; <strong>Fundamental Trust</strong> &times; 0.35</div>
+      <div class="cp-formula">Signal = Tech Score + Fund Score &times; <strong>Fundamental Trust</strong> &times; 0.35 + Commodity Signal &times; <strong>Commodity Weight</strong></div>
       <p>
         Every morning, the system scores the stock's technicals (MA, MACD, RSI, KDJ, Bollinger, volume)
         on a scale of <strong>&minus;100 to +100</strong>. Fundamentals (growth, valuation, profitability) are scored
         separately. The <strong>Fundamental Trust</strong> weight controls how much the fundamental score
-        blends into the final signal. Set it higher to let fundamentals override weak technicals,
-        or lower to trade purely on chart patterns.
+        blends into the final signal. The <strong>Commodity Signal</strong> (&minus;15 to +15) reflects
+        SHFE nickel and lithium carbonate price momentum &mdash; when upstream commodity prices rally,
+        it boosts the buy signal since Huayou's margins improve. Set <strong>Commodity Weight</strong>
+        higher to let commodity price movements influence decisions more.
       </p>
     </div>
   </div>
@@ -82,9 +84,47 @@
   <div class="cp-step">
     <div class="cp-step-num">4</div>
     <div class="cp-step-body">
+      <h4>Regime-Aware Dynamic Strategy</h4>
+      <p>
+        Instead of using one set of rules for all conditions, Buffett detects the current
+        <strong>market regime</strong> (trend + RSI + volatility + momentum + streak) and activates a
+        matching strategy. Each strategy adjusts thresholds and position sizing automatically:
+      </p>
+      <div class="cp-threshold-table">
+        <div class="cp-thresh-row cp-thresh-buy2">
+          <span class="cp-thresh-label"><strong>Trend Following</strong> (uptrend + momentum)</span>
+          <span class="cp-thresh-action">Easier BUY, tighter SELL &mdash; ride the wave (70% position)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-hold">
+          <span class="cp-thresh-label"><strong>Swing / Range-Bound</strong> (sideways)</span>
+          <span class="cp-thresh-action">Standard thresholds &mdash; buy support, sell resistance (50% position)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-sell1">
+          <span class="cp-thresh-label"><strong>Defensive / Exit</strong> (downtrend + high vol)</span>
+          <span class="cp-thresh-action">Harder BUY, easier SELL &mdash; protect capital (20% position)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-buy1">
+          <span class="cp-thresh-label"><strong>Contrarian Bounce</strong> (down + oversold)</span>
+          <span class="cp-thresh-action">Easier BUY, block SELL &mdash; catch the reversal (30% position)</span>
+        </div>
+        <div class="cp-thresh-row cp-thresh-sell2">
+          <span class="cp-thresh-label"><strong>Capitulation Watch</strong> (&ge;5 down days or -10%)</span>
+          <span class="cp-thresh-action">Very easy BUY on any signal &mdash; snap-back likely (25% position)</span>
+        </div>
+      </div>
+      <p>
+        The strategy mode is shown at the top of each morning brief. Position percentages
+        are advisory &mdash; how much of your swing allocation to deploy in this regime.
+      </p>
+    </div>
+  </div>
+
+  <div class="cp-step">
+    <div class="cp-step-num">5</div>
+    <div class="cp-step-body">
       <h4>Safety Overrides</h4>
       <p>
-        Even after the formula runs, Buffett applies safety checks:
+        Even after the formula and regime strategy run, Buffett applies safety checks:
         overbought RSI blocks aggressive BUY; oversold RSI blocks SELL;
         very poor fundamentals downgrade aggressive BUY to light BUY.
         These are hardcoded guardrails you cannot override here.
