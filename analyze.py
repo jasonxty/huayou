@@ -18,6 +18,7 @@ from data.store import (
     get_connection, init_db, save_ohlcv, load_ohlcv,
     save_indicators, load_indicators, save_agent_run, save_brief,
     load_position, load_kobe_calibration,
+    save_fund_cache, load_fund_cache,
 )
 from data.fetcher import fetch_incremental
 from data.indicators import compute_all
@@ -111,22 +112,46 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
     logger.info("Technical score: %+.0f", tech_result.score)
 
     logger.info("Running Fundamental Analyst...")
+    fund_result = None
     try:
         snap = fetch_fundamentals(current_price=latest_price)
         fund_result = analyze_fundamental(snap)
+        save_fund_cache(
+            conn, str(ohlcv.iloc[-1]["date"]),
+            fund_result.details.get("report_period", ""),
+            fund_result.score, fund_result.details,
+        )
+        logger.info("Fundamental score: %+.0f (cached)", fund_result.score)
+    except Exception as e:
+        logger.warning("Fundamental fetch failed, trying cache: %s", e)
+        cached = load_fund_cache(conn)
+        if cached:
+            from agents.base import AgentResult
+            fund_result = AgentResult(
+                agent_name="fundamental",
+                score=cached["score"],
+                confidence=0.5,
+                details=cached["details"],
+                signals=[f"[cached from {cached['fetch_date']}]"],
+            )
+            logger.info("Using cached fundamental score: %+.0f (from %s)",
+                        cached["score"], cached["fetch_date"])
+        else:
+            logger.warning("No cached fundamental data available")
+    if fund_result:
         save_agent_run(
             conn, str(ohlcv.iloc[-1]["date"]),
             fund_result.agent_name, fund_result.score, fund_result.to_dict(),
         )
         agent_results.append(fund_result)
-        logger.info("Fundamental score: %+.0f", fund_result.score)
-    except Exception as e:
-        logger.warning("Fundamental analysis failed (non-fatal): %s", e)
 
     logger.info("Classifying market regime...")
-    regime = classify_regime(indicators)
+    regime = classify_regime(indicators, ohlcv)
     regime_match = match_historical_regime(indicators, ohlcv, regime)
-    logger.info("Regime: %s, matches: %d", regime, regime_match["count"])
+    logger.info("Regime: %s / strategy=%s, matches: %d",
+                regime["trend"] + "/" + regime["rsi"],
+                regime.get("strategy_mode", "default"),
+                regime_match["count"])
 
     logger.info("Fetching catalysts & commodity prices...")
     try:
@@ -223,6 +248,7 @@ def _run_analysis(conn, backtest_results: list) -> dict | None:
         expert_snapshot=expert_snapshot,
         kobe_weights=kobe_weights,
         calibration_buckets=calibration_buckets or None,
+        conn=conn,
     )
 
     save_brief(

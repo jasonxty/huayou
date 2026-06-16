@@ -70,15 +70,21 @@ def apply_confidence_calibration(
 
 # ── Regime matching ──
 
-def classify_regime(indicators: pd.DataFrame) -> dict:
-    """Discretize latest indicator state into a 2-dimension regime vector.
+def classify_regime(indicators: pd.DataFrame, ohlcv: pd.DataFrame | None = None) -> dict:
+    """Discretize latest indicator state into a multi-dimension regime vector.
 
     Dimensions:
         trend: up / down / sideways (based on MA20 vs MA60)
         rsi: oversold / neutral / overbought (RSI12 buckets)
+        volatility: low / normal / high (ATR14 vs 20-day average)
+        momentum: accelerating / decelerating / flat (MACD histogram slope)
+        consecutive_down: number of consecutive down days (0+)
+        recent_drop_pct: cumulative drop over the last 5 trading days
     """
     if indicators.empty:
-        return {"trend": "unknown", "rsi": "unknown"}
+        return {"trend": "unknown", "rsi": "unknown", "volatility": "normal",
+                "momentum": "flat", "consecutive_down": 0, "recent_drop_pct": 0.0,
+                "strategy_mode": "default"}
 
     latest = indicators.iloc[-1]
 
@@ -103,7 +109,132 @@ def classify_regime(indicators: pd.DataFrame) -> dict:
     else:
         rsi_bucket = "neutral"
 
-    return {"trend": trend, "rsi": rsi_bucket}
+    atr = latest.get("atr14", np.nan)
+    if pd.isna(atr) or len(indicators) < 20:
+        vol = "normal"
+    else:
+        avg_atr = indicators["atr14"].iloc[-20:].mean()
+        if atr > avg_atr * 1.3:
+            vol = "high"
+        elif atr < avg_atr * 0.7:
+            vol = "low"
+        else:
+            vol = "normal"
+
+    macd_hist = latest.get("macd_hist", np.nan)
+    if pd.isna(macd_hist) or len(indicators) < 3:
+        momentum = "flat"
+    else:
+        prev_hist = indicators["macd_hist"].iloc[-3]
+        if pd.isna(prev_hist):
+            momentum = "flat"
+        elif macd_hist > prev_hist + 0.05:
+            momentum = "accelerating"
+        elif macd_hist < prev_hist - 0.05:
+            momentum = "decelerating"
+        else:
+            momentum = "flat"
+
+    consecutive_down = 0
+    recent_drop_pct = 0.0
+    if ohlcv is not None and len(ohlcv) >= 2:
+        closes = ohlcv["close"].values
+        for i in range(len(closes) - 1, 0, -1):
+            if closes[i] < closes[i - 1]:
+                consecutive_down += 1
+            else:
+                break
+        if len(closes) >= 6:
+            recent_drop_pct = (closes[-1] / closes[-6] - 1) * 100
+
+    strategy_mode = _classify_strategy_mode(
+        trend, rsi_bucket, vol, momentum, consecutive_down, recent_drop_pct
+    )
+
+    return {
+        "trend": trend, "rsi": rsi_bucket,
+        "volatility": vol, "momentum": momentum,
+        "consecutive_down": consecutive_down,
+        "recent_drop_pct": round(recent_drop_pct, 2),
+        "strategy_mode": strategy_mode,
+    }
+
+
+# ── Per-regime strategy modes ──
+
+REGIME_STRATEGIES = {
+    "contrarian_bounce": {
+        "label": "Contrarian Bounce",
+        "desc": "Deep oversold — look for reversal entries",
+        "buy_adjust": -8,
+        "sell_adjust": -5,
+        "position_pct": 30,
+    },
+    "trend_follow": {
+        "label": "Trend Following",
+        "desc": "Uptrend confirmed — ride momentum, trail stops",
+        "buy_adjust": -5,
+        "sell_adjust": 5,
+        "position_pct": 70,
+    },
+    "swing_range": {
+        "label": "Swing / Range-Bound",
+        "desc": "Sideways market — buy support, sell resistance",
+        "buy_adjust": 0,
+        "sell_adjust": 0,
+        "position_pct": 50,
+    },
+    "defensive_exit": {
+        "label": "Defensive / Exit",
+        "desc": "Strong downtrend — protect capital, tight stops",
+        "buy_adjust": 10,
+        "sell_adjust": -8,
+        "position_pct": 20,
+    },
+    "capitulation_watch": {
+        "label": "Capitulation Watch",
+        "desc": "Panic selling — extreme drop, watch for snap-back",
+        "buy_adjust": -12,
+        "sell_adjust": -10,
+        "position_pct": 25,
+    },
+    "default": {
+        "label": "Standard",
+        "desc": "Normal conditions — use base thresholds",
+        "buy_adjust": 0,
+        "sell_adjust": 0,
+        "position_pct": 50,
+    },
+}
+
+
+def _classify_strategy_mode(
+    trend: str, rsi: str, vol: str, momentum: str,
+    consecutive_down: int, recent_drop_pct: float,
+) -> str:
+    """Map regime dimensions to a strategy mode."""
+    if consecutive_down >= 5 or recent_drop_pct <= -10:
+        return "capitulation_watch"
+
+    if trend == "down" and rsi == "oversold":
+        return "contrarian_bounce"
+
+    if trend == "down" and vol == "high" and momentum == "decelerating":
+        return "defensive_exit"
+
+    if trend == "down" and rsi == "neutral":
+        return "defensive_exit"
+
+    if trend == "up" and momentum == "accelerating":
+        return "trend_follow"
+
+    if trend == "up" and rsi == "neutral":
+        return "trend_follow"
+
+    if trend == "sideways":
+        return "swing_range"
+
+    return "default"
 
 
 def match_historical_regime(
@@ -210,7 +341,7 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
     cleaned = re.sub(r"── KEY CATALYSTS.*?── (NEWS|EXPERT|T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"── NEWS SENTIMENT.*?── (EXPERT|T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"── EXPERT OPINIONS.*?── (T\+0|REGIME)", r"── \1", cleaned, flags=re.DOTALL)
-    cleaned = re.sub(r"── T\+0.*?── REGIME", "── REGIME", cleaned, flags=re.DOTALL)
+    cleaned = re.sub(r"── T\+0.*?── (REGIME|HISTORICAL)", r"── \1", cleaned, flags=re.DOTALL)
     cleaned = cleaned.replace(",", "")
     found_numbers = re.findall(r"[\d]+\.?\d*", cleaned)
     violations = []
@@ -235,6 +366,42 @@ def validate_grounding(brief_text: str, agent_results: list[AgentResult],
 
 # ── Rule-based action decision ──
 
+def compute_commodity_signal(catalysts: CatalystSnapshot | None) -> float:
+    """Score based on commodity price momentum (-15 to +15).
+
+    SHFE nickel day-change is the primary driver since it directly
+    affects Huayou's smelting margins.
+    """
+    if not catalysts:
+        return 0.0
+
+    score = 0.0
+
+    if catalysts.shfe_nickel_chg and catalysts.shfe_nickel:
+        pct = catalysts.shfe_nickel_chg / catalysts.shfe_nickel * 100
+        if pct > 2.0:
+            score += 12
+        elif pct > 1.0:
+            score += 6
+        elif pct > 0.3:
+            score += 3
+        elif pct < -2.0:
+            score -= 12
+        elif pct < -1.0:
+            score -= 6
+        elif pct < -0.3:
+            score -= 3
+
+    if catalysts.lithium_carbonate_chg and catalysts.lithium_carbonate:
+        li_pct = catalysts.lithium_carbonate_chg / catalysts.lithium_carbonate * 100
+        if li_pct > 2.0:
+            score += 3
+        elif li_pct < -2.0:
+            score -= 3
+
+    return float(np.clip(score, -15, 15))
+
+
 def _decide_action(
     tech_score: float,
     fund_score: float,
@@ -242,27 +409,112 @@ def _decide_action(
     regime_match: dict,
     best_strategy: BacktestResult | None,
     weights: dict | None = None,
-) -> tuple[str, str]:
-    """Deterministic action and risk level from scores.
+    commodity_signal: float = 0.0,
+) -> tuple[str, str, str]:
+    """Deterministic action, risk level, and position % from scores.
 
-    Uses Buffett's learned weights + 行情分桶偏移 + 基本面合成得分。
+    Uses Buffett's learned weights + regime-aware dynamic strategy +
+    基本面合成得分 + 商品期货领先信号。
+
+    Returns (action, risk_level, position_advice).
     """
     w = weights or config.KOBE_DEFAULT_WEIGHTS
     signal = effective_signal_score(tech_score, fund_score, w)
+
+    cw = w.get("commodity_weight", 0.5)
+    signal += commodity_signal * cw
+
+    strategy_mode = regime.get("strategy_mode", "default")
+    strat = REGIME_STRATEGIES.get(strategy_mode, REGIME_STRATEGIES["default"])
 
     rk = f"{regime.get('trend', 'unknown')}|{regime.get('rsi', 'unknown')}"
     rb = (w.get("regime_buy_adjust") or {}).get(rk, 0)
     rs = (w.get("regime_sell_adjust") or {}).get(rk, 0)
 
-    buy_thresh = w.get("tech_buy_threshold", 40) + rb
-    mild_buy = w.get("tech_mild_buy_threshold", 20) + int(round(rb * 0.55))
-    sell_thresh = w.get("tech_sell_threshold", -40) - rs
-    mild_sell = w.get("tech_mild_sell_threshold", -20) - int(round(rs * 0.55))
+    buy_adj = strat["buy_adjust"]
+    sell_adj = strat["sell_adjust"]
+
+    buy_thresh = w.get("tech_buy_threshold", 25) + rb + buy_adj
+    mild_buy = w.get("tech_mild_buy_threshold", 12) + int(round((rb + buy_adj) * 0.55))
+    sell_thresh = w.get("tech_sell_threshold", -25) - rs + sell_adj
+    mild_sell = w.get("tech_mild_sell_threshold", -12) - int(round((rs - sell_adj) * 0.55))
 
     has_backtest_edge = best_strategy is not None and best_strategy.passes_threshold
-    regime_bearish = regime.get("trend") == "down"
     regime_oversold = regime.get("rsi") == "oversold"
     regime_overbought = regime.get("rsi") == "overbought"
+    pos_pct = strat["position_pct"]
+
+    if strategy_mode == "capitulation_watch":
+        if signal >= mild_buy or regime_oversold:
+            action = "BUY (capitulation bounce)"
+            risk = "HIGH"
+        else:
+            action = "HOLD (panic — wait for volume exhaustion)"
+            risk = "HIGH"
+        return action, risk, f"{pos_pct}%"
+
+    if strategy_mode == "contrarian_bounce":
+        if signal >= mild_buy:
+            action = "BUY (oversold bounce)"
+            risk = "HIGH"
+        elif signal <= sell_thresh:
+            action = "HOLD (oversold — avoid selling into weakness)"
+            risk = "HIGH"
+        else:
+            action = "HOLD (watch for reversal signal)"
+            risk = "MEDIUM"
+        return action, risk, f"{pos_pct}%"
+
+    if strategy_mode == "trend_follow":
+        if signal >= buy_thresh and not regime_overbought:
+            action = "BUY (trend continuation)" if has_backtest_edge else "BUY (add to position)"
+            risk = "LOW" if has_backtest_edge else "MEDIUM"
+        elif signal >= mild_buy:
+            action = "BUY (pullback entry)"
+            risk = "MEDIUM"
+        elif signal <= sell_thresh:
+            action = "SELL (trend reversal warning)"
+            risk = "HIGH"
+        elif signal <= mild_sell:
+            action = "SELL (trail stop hit)"
+            risk = "MEDIUM"
+        else:
+            action = "HOLD (ride the trend)"
+            risk = "LOW"
+        return action, risk, f"{pos_pct}%"
+
+    if strategy_mode == "swing_range":
+        if signal >= buy_thresh:
+            action = "BUY (near support)" if not regime_overbought else "HOLD (near resistance)"
+            risk = "MEDIUM"
+        elif signal >= mild_buy:
+            action = "BUY (range bottom)"
+            risk = "MEDIUM"
+        elif signal <= sell_thresh:
+            action = "SELL (near resistance)"
+            risk = "MEDIUM"
+        elif signal <= mild_sell:
+            action = "SELL (range top)"
+            risk = "MEDIUM"
+        else:
+            action = "HOLD (mid-range)"
+            risk = "LOW"
+        return action, risk, f"{pos_pct}%"
+
+    if strategy_mode == "defensive_exit":
+        if signal >= buy_thresh and not regime_overbought:
+            action = "BUY (light probe)" if has_backtest_edge else "HOLD (too risky to add)"
+            risk = "HIGH"
+        elif signal <= mild_sell:
+            action = "SELL (protect capital)"
+            risk = "HIGH"
+        elif signal <= sell_thresh:
+            action = "SELL (stop loss — downtrend)"
+            risk = "HIGH"
+        else:
+            action = "HOLD (wait for trend change)"
+            risk = "MEDIUM"
+        return action, risk, f"{pos_pct}%"
 
     if signal >= buy_thresh and not regime_overbought:
         action = "BUY (aggressive)" if has_backtest_edge else "BUY (light probe)"
@@ -271,19 +523,19 @@ def _decide_action(
             action = "BUY (light probe)" if has_backtest_edge else "BUY (light)"
             risk = "HIGH"
     elif signal >= mild_buy:
-        action = "BUY (light)" if not regime_bearish else "HOLD (wait and see)"
+        action = "BUY (light)"
         risk = "MEDIUM"
     elif signal <= sell_thresh and not regime_oversold:
         action = "SELL (reduce)" if has_backtest_edge else "SELL (stop loss)"
         risk = "HIGH"
     elif signal <= mild_sell:
         action = "SELL (trim)" if not regime_oversold else "HOLD (oversold bounce possible)"
-        risk = "HIGH" if regime_bearish else "MEDIUM"
+        risk = "HIGH"
     else:
         action = "HOLD (range-bound)"
         risk = "LOW"
 
-    return action, risk
+    return action, risk, f"{pos_pct}%"
 
 
 # ── Expert confidence adjustment ──
@@ -325,6 +577,145 @@ def _expert_confidence_adjustment(snapshot: ExpertSnapshot | None,
     return 0.0
 
 
+# ── Yesterday retro + tomorrow forecast ──
+
+
+def build_yesterday_retro(conn, today: str) -> str:
+    """Compare yesterday's brief prediction with today's actual open/close.
+
+    Returns a formatted text block, or empty string if no prior brief exists.
+    """
+    import json as _json
+
+    row = conn.execute(
+        """SELECT b.date, b.action, b.confidence, b.agent_summary_json,
+                  o_today.open AS today_open, o_today.close AS today_close,
+                  o_prev.close AS prev_close
+           FROM briefs b
+           LEFT JOIN ohlcv o_prev ON o_prev.date = b.date
+           LEFT JOIN ohlcv o_today ON o_today.date = ?
+           WHERE b.date < ?
+           ORDER BY b.date DESC LIMIT 1""",
+        (today, today),
+    ).fetchone()
+
+    if not row or row[0] is None:
+        return ""
+
+    prev_date, prev_action, prev_conf = row[0], row[1], row[2]
+    summary_json = row[3]
+    today_open, today_close, prev_close = row[4], row[5], row[6]
+
+    if not prev_close or prev_close <= 0 or not today_close:
+        return ""
+
+    ret_pct = (today_close - prev_close) / prev_close * 100
+    gap_pct = (today_open - prev_close) / prev_close * 100 if today_open else 0
+
+    prev_prediction = ""
+    if summary_json:
+        try:
+            blob = _json.loads(summary_json)
+            prev_prediction = blob.get("tomorrow_prediction", "")
+        except (ValueError, TypeError):
+            pass
+
+    action_upper = (prev_action or "").upper()
+    if "BUY" in action_upper:
+        correct = ret_pct > 0
+        verdict = "Correct — price rose" if correct else "Wrong — price fell"
+    elif "SELL" in action_upper:
+        correct = ret_pct < 0
+        verdict = "Correct — price dropped" if correct else "Wrong — price rose"
+    else:
+        correct = abs(ret_pct) < 1.5
+        verdict = "Correct — market stayed flat" if correct else f"Missed — market moved {ret_pct:+.1f}%"
+
+    icon = "✅" if correct else "❌"
+
+    lines = f"\n  ── YESTERDAY'S RETRO ({prev_date}) ──\n"
+    lines += f"  Signal was: {prev_action} (conf {prev_conf*100:.0f}%)\n"
+    if prev_prediction:
+        lines += f"  Prediction: {prev_prediction}\n"
+    lines += f"  Actual: open {gap_pct:+.1f}% gap, close {ret_pct:+.1f}% vs prev close\n"
+    lines += f"  {icon} Verdict: {verdict}\n"
+
+    return lines
+
+
+def build_tomorrow_forecast(
+    tech_score: float,
+    fund_score: float,
+    current_regime: dict,
+    regime_match: dict,
+    action: str,
+    confidence: float,
+    support: float | str,
+    resistance: float | str,
+    latest_price: float,
+) -> tuple[str, str]:
+    """Generate a short next-day prediction and key levels to watch.
+
+    Returns (brief_text_block, prediction_summary_for_storage).
+    """
+    trend = current_regime.get("trend", "unknown")
+    rsi_state = current_regime.get("rsi", "unknown")
+
+    if regime_match.get("sufficient"):
+        hist_wr = regime_match["win_rate"]
+        hist_avg = regime_match["avg_return"] * 100
+    else:
+        hist_wr = 0.5
+        hist_avg = 0.0
+
+    if "BUY" in action.upper():
+        direction = "up"
+        reason = "bullish technicals + buy signal"
+    elif "SELL" in action.upper():
+        direction = "down"
+        reason = "bearish technicals + sell signal"
+    else:
+        if hist_avg > 0.3:
+            direction = "slightly up"
+            reason = f"historical pattern ({hist_wr*100:.0f}% win rate, avg {hist_avg:+.1f}%)"
+        elif hist_avg < -0.3:
+            direction = "slightly down"
+            reason = f"historical pattern ({hist_wr*100:.0f}% win rate, avg {hist_avg:+.1f}%)"
+        else:
+            direction = "range-bound"
+            reason = "no strong directional signal"
+
+    try:
+        sup_val = float(support)
+        res_val = float(resistance)
+    except (ValueError, TypeError):
+        sup_val = latest_price * 0.98
+        res_val = latest_price * 1.02
+
+    prediction_text = (
+        f"{direction} — {reason}"
+    )
+
+    lines = f"\n  ── TOMORROW'S OUTLOOK ──\n"
+    lines += f"  Expected: {direction}\n"
+    lines += f"  Reasoning: {reason}\n"
+    lines += f"  Key levels: support ¥{sup_val:.2f} / resistance ¥{res_val:.2f}\n"
+
+    if "BUY" in action.upper():
+        lines += f"  Watch for: breakout above ¥{res_val:.2f} to confirm entry\n"
+    elif "SELL" in action.upper():
+        lines += f"  Watch for: breakdown below ¥{sup_val:.2f} to confirm exit\n"
+    else:
+        lines += f"  Watch for: stay between ¥{sup_val:.2f}–¥{res_val:.2f}, wait for breakout\n"
+
+    if rsi_state == "overbought":
+        lines += "  ⚠ RSI overbought — potential pullback risk\n"
+    elif rsi_state == "oversold":
+        lines += "  ⚠ RSI oversold — potential bounce opportunity\n"
+
+    return lines, prediction_text
+
+
 # ── Synthesis ──
 
 def synthesize(
@@ -340,6 +731,7 @@ def synthesize(
     analysis_date: str | None = None,
     kobe_weights: dict | None = None,
     calibration_buckets: list[dict] | None = None,
+    conn=None,
 ) -> dict:
     """Produce the morning brief. Pure rule-based, no LLM needed.
 
@@ -381,13 +773,16 @@ def synthesize(
     confidence = max(0.30, min(0.90, confidence * regime_trust + expert_adj))
     confidence = apply_confidence_calibration(confidence, calibration_buckets)
 
-    action, risk_level = _decide_action(
+    commodity_sig = compute_commodity_signal(catalysts)
+
+    action, risk_level, position_advice = _decide_action(
         tech_score,
         fund_score,
         current_regime,
         regime_match,
         best_strategy,
         weights=w,
+        commodity_signal=commodity_sig,
     )
 
     regime_line = (
@@ -407,15 +802,37 @@ def synthesize(
             f"sharpe={bt.sharpe:5.2f}  dd={bt.max_drawdown*100:5.1f}%\n"
         )
 
+    retro_text = ""
+    if conn is not None:
+        try:
+            retro_text = build_yesterday_retro(conn, today)
+        except Exception as e:
+            logger.warning("Failed to build yesterday retro: %s", e)
+
     brief_text = f"""{'═' * 56}
   {config.KOBE_AVATAR} {config.KOBE_NAME}'s Morning Brief — {today}
   {config.TICKER_NAME} ({config.TICKER})
 {'═' * 56}
+"""
 
+    if retro_text:
+        brief_text += retro_text
+
+    strat_mode = current_regime.get("strategy_mode", "default")
+    strat_info = REGIME_STRATEGIES.get(strat_mode, REGIME_STRATEGIES["default"])
+    consec = current_regime.get("consecutive_down", 0)
+    drop5 = current_regime.get("recent_drop_pct", 0)
+    vol_label = current_regime.get("volatility", "normal")
+
+    brief_text += f"""
   {config.KOBE_NAME} says: {action}
-  CONFIDENCE: {confidence*100:.0f}%
-  RISK LEVEL: {risk_level}
+  CONFIDENCE: {confidence*100:.0f}%  |  RISK: {risk_level}  |  Position: {position_advice}
   PRICE:      {latest_price:.2f}  |  ATR(14): {atr}
+
+  ── STRATEGY MODE: {strat_info['label']} ──
+  {strat_info['desc']}
+  Regime: {current_regime['trend']} / {current_regime['rsi']} / vol={vol_label} / momentum={current_regime.get('momentum', 'flat')}
+  Streak: {consec} consecutive down days  |  5-day change: {drop5:+.1f}%
 
   ── TECHNICAL SIGNALS (score: {tech_score:+.0f}/100) ──
 """
@@ -470,6 +887,10 @@ def synthesize(
                 continue
             brief_text += f"  📅 [{evt.expected_date}] {evt.name}\n"
             brief_text += f"     {evt.description[:80]}\n"
+
+        if commodity_sig != 0:
+            direction = "bullish" if commodity_sig > 0 else "bearish"
+            brief_text += f"  → Commodity signal: {commodity_sig:+.0f} ({direction} for stock)\n"
 
     if news_sentiment and news_sentiment.items:
         ns = news_sentiment
@@ -543,14 +964,20 @@ def synthesize(
             for sig in t0_advice.signals:
                 brief_text += f"    • {sig}\n"
 
+    forecast_text, prediction_summary = build_tomorrow_forecast(
+        tech_score, fund_score, current_regime, regime_match,
+        action, confidence, support, resistance, latest_price,
+    )
+
     brief_text += f"""
-  ── REGIME ({current_regime['trend']} / {current_regime['rsi']}) ──
+  ── HISTORICAL PATTERN ({current_regime['trend']} / {current_regime['rsi']}) ──
 {regime_line}
 
   ── BACKTEST STRATEGIES ──
 {bt_lines}
   ── LEVELS ──
   Support: {support}  |  Resistance: {resistance}
+{forecast_text}
 {'═' * 56}
 """
 
@@ -565,10 +992,15 @@ def synthesize(
         "risk_level": risk_level,
         "brief_text": brief_text,
         "key_signals": tech_result.signals if tech_result else [],
+        "tomorrow_prediction": prediction_summary,
+        "commodity_signal": commodity_sig,
+        "position_advice": position_advice,
+        "strategy_mode": current_regime.get("strategy_mode", "default"),
         "reasoning": (
-            f"Signal {effective_signal_score(tech_score, fund_score, w):+.0f} "
-            f"(tech {tech_score:+.0f}, fund {fund_score:+.0f}), "
-            f"regime {current_regime['trend']}/{current_regime['rsi']}"
+            f"Signal {effective_signal_score(tech_score, fund_score, w) + commodity_sig * w.get('commodity_weight', 0.5):+.0f} "
+            f"(tech {tech_score:+.0f}, fund {fund_score:+.0f}, commodity {commodity_sig:+.0f}), "
+            f"regime {current_regime['trend']}/{current_regime['rsi']}, "
+            f"strategy={current_regime.get('strategy_mode', 'default')}"
         ),
         "regime": current_regime,
         "regime_match": regime_match,

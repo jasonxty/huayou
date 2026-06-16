@@ -194,8 +194,52 @@ def init_db(conn: sqlite3.Connection) -> None:
             report_json TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS buffett_reset (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reset_date TEXT NOT NULL,
+            shares INTEGER NOT NULL,
+            cost REAL NOT NULL,
+            cash REAL NOT NULL DEFAULT 0,
+            reason TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS fund_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fetch_date TEXT,
+            report_period TEXT,
+            score REAL,
+            details_json TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
     """)
     conn.commit()
+
+
+def save_buffett_reset(conn: sqlite3.Connection, reset_date: str,
+                       shares: int, cost: float, cash: float = 0,
+                       reason: str = "") -> None:
+    conn.execute(
+        "INSERT INTO buffett_reset (reset_date, shares, cost, cash, reason) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (reset_date, shares, cost, cash, reason),
+    )
+    conn.commit()
+
+
+def load_buffett_reset(conn: sqlite3.Connection) -> dict | None:
+    """Load the latest Buffett reset point."""
+    row = conn.execute(
+        "SELECT reset_date, shares, cost, cash FROM buffett_reset "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "reset_date": row[0], "shares": int(row[1]),
+        "cost": float(row[2]), "cash": float(row[3]),
+    }
 
 
 def load_position(conn: sqlite3.Connection, ticker: str = config.TICKER) -> dict | None:
@@ -678,4 +722,35 @@ def load_kobe_stats(conn: sqlite3.Connection) -> dict:
         "learning_iterations": learning_iterations,
         "last_learning_samples": weights_row[0] if weights_row else 0,
         "last_learning_date": weights_row[1][:10] if weights_row else "N/A",
+    }
+
+
+def save_fund_cache(conn: sqlite3.Connection, fetch_date: str,
+                    report_period: str, score: float, details: dict) -> None:
+    conn.execute(
+        "INSERT INTO fund_cache (fetch_date, report_period, score, details_json) "
+        "VALUES (?, ?, ?, ?)",
+        (fetch_date, report_period, score,
+         json.dumps(details, cls=_NumpyEncoder, ensure_ascii=False)),
+    )
+    conn.commit()
+
+
+def load_fund_cache(conn: sqlite3.Connection, max_age_days: int = 90) -> dict | None:
+    """Load the most recent cached fundamental result within max_age_days."""
+    row = conn.execute(
+        "SELECT fetch_date, report_period, score, details_json "
+        "FROM fund_cache ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return None
+    from datetime import date, timedelta
+    fetch_dt = date.fromisoformat(row[0][:10])
+    if (date.today() - fetch_dt).days > max_age_days:
+        return None
+    return {
+        "fetch_date": row[0],
+        "report_period": row[1],
+        "score": row[2],
+        "details": json.loads(row[3]),
     }
