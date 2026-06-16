@@ -1,8 +1,14 @@
-# 华友钴业 (603799) AI Analyst
+# 华友钴业 (603799) AI Analyst — Buffett Edition
 
-Rule-based single-stock trading intelligence for 603799 华友钴业. Fetches real market data, computes 20 technical indicators, runs fundamental analysis, tracks commodity catalysts (LME镍/沪镍/碳酸锂), monitors news sentiment, integrates TaoGuBa (淘股吧) expert opinions, generates T+0 intraday trading advice, and produces a daily morning brief — all locally, no API keys needed.
+Rule-based single-stock trading intelligence for 603799 华友钴业, powered by **Buffett** — an adaptive AI strategist that learns from its own track record. Fetches real market data, computes 20 technical indicators, runs fundamental analysis, tracks commodity catalysts (LME镍/沪镍/碳酸锂), monitors news sentiment, integrates TaoGuBa (淘股吧) expert opinions, generates T+0 intraday trading advice, and produces a daily morning brief — all locally, no API keys needed.
 
-Real-time price monitoring with automatic WeChat push notifications when T+0 thresholds are hit. Built-in performance tracking to measure recommendation accuracy over time. Expert opinion tracking from TaoGuBa influences confidence scoring.
+**Regime-aware dynamic strategy**: Buffett detects the current market regime (trend, RSI, volatility, momentum, consecutive drops) and activates one of 5 strategy modes — Trend Following, Swing/Range, Defensive Exit, Contrarian Bounce, or Capitulation Watch — each with its own thresholds and position sizing.
+
+**Commodity-driven signals**: SHFE nickel and lithium carbonate price momentum directly influence buy/sell decisions, since upstream commodity prices drive Huayou's margins.
+
+**Learning engine**: Buffett adjusts its strategy weights based on historical signal accuracy, and caches fundamental data to prevent network-failure signal drift.
+
+Real-time price monitoring with automatic WeChat push notifications when T+0 thresholds are hit. Interactive web dashboard (FastAPI + HTMX) with performance comparison between Buffett's recommendations and your actual trades.
 
 ## Quick Start
 
@@ -71,10 +77,18 @@ huayou-analyst/
 │   ├── technical.py        # Technical scoring (MA, MACD, RSI, KDJ, Bollinger, volume)
 │   ├── fundamental.py      # Fundamental scoring (growth, margins, valuation, cycle)
 │   ├── t0_advisor.py       # T+0 intraday advisor (zones, split-sell, escape plan)
-│   └── strategist.py       # Regime matching, brief synthesis, grounding validator
+│   ├── strategist.py       # Regime detection, dynamic strategy, brief synthesis
+│   └── kobe.py             # Buffett learning engine (weight tuning, journal, calibration)
 ├── backtest/
 │   ├── engine.py           # 5 strategies + walk-forward validation
-│   └── t0_backtest.py      # T+0 strategy backtester
+│   ├── t0_backtest.py      # T+0 strategy backtester
+│   ├── buffett_backtest.py # Buffett strategy historical simulation
+│   └── simulation.py       # Portfolio simulation engine
+├── web/
+│   ├── app.py              # FastAPI dashboard + control panel
+│   ├── services.py         # Business logic (PnL, comparison, hero cards)
+│   ├── templates/          # Jinja2 HTML templates
+│   └── static/             # CSS styles (dark mode)
 ├── scripts/
 │   └── start-monitor.sh    # Auto-start script for launchd
 ├── com.huayou.monitor.plist # macOS launchd config (auto-run Mon-Fri 9:20)
@@ -85,15 +99,18 @@ huayou-analyst/
 
 | Section | Content |
 |---------|---------|
-| ACTION | BUY / HOLD / SELL with confidence % and risk level |
+| YESTERDAY'S RETRO | Review of previous prediction vs actual outcome |
+| ACTION | BUY / HOLD / SELL with confidence %, risk level, and position % |
+| STRATEGY MODE | Active regime strategy (Trend Follow / Swing / Defensive / Contrarian / Capitulation) |
 | TECHNICAL | 6 sub-scorers: MA alignment, MACD, RSI, KDJ, Bollinger, volume |
-| FUNDAMENTAL | PE/PB, margins, ROE, revenue growth, cycle analysis |
-| KEY CATALYSTS | LME镍, 沪镍主力, 碳酸锂主力, upcoming events |
+| FUNDAMENTAL | PE/PB, margins, ROE, revenue growth, cycle analysis (cached for stability) |
+| KEY CATALYSTS | LME镍, 沪镍主力, 碳酸锂主力, commodity signal score, upcoming events |
 | NEWS SENTIMENT | Recent news with keyword sentiment (利好/利空/中性) |
 | EXPERT OPINIONS | TaoGuBa expert consensus, signals, price targets |
 | T+0 ADVICE | Split-batch sell/buy zones, stop-loss, escape plan |
-| REGIME | Historical pattern matching with forward return stats |
+| HISTORICAL PATTERN | Regime matching with forward return stats |
 | BACKTEST | 5 strategies: MA crossover, MACD, volume breakout, RSI, mean reversion |
+| TOMORROW'S OUTLOOK | Next-day prediction with key levels to watch |
 
 ## Real-time Monitoring
 
